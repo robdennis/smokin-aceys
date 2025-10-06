@@ -1,0 +1,1236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Card Game Strategy Simulator</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Plotly.js for charting -->
+    <script src="https://cdn.plot.ly/plotly-2.33.0.min.js"></script>
+    <style>
+        /* Custom styles for better UX */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #111827; /* Dark background */
+            color: #d1d5db; /* Light text */
+        }
+        .card {
+            background-color: #1f2937;
+            border: 1px solid #374151;
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+        }
+        .btn {
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            font-weight: 600;
+            transition: all 0.2s ease-in-out;
+            border: 1px solid transparent;
+        }
+        .btn-primary {
+            background-color: #3b82f6;
+            color: white;
+        }
+        .btn-primary:hover {
+            background-color: #2563eb;
+        }
+        .btn-secondary {
+            background-color: #4b5563;
+            color: white;
+        }
+        .btn-secondary:hover {
+            background-color: #374151;
+        }
+        .btn-danger {
+            background-color: #ef4444;
+            color: white;
+        }
+        .btn-danger:hover {
+            background-color: #dc2626;
+        }
+        input, select {
+            background-color: #374151;
+            border: 1px solid #4b5563;
+            border-radius: 0.5rem;
+            padding: 0.5rem;
+            width: 100%;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 2px #1e40af;
+        }
+        details > summary {
+            cursor: pointer;
+            font-size: 1.25rem;
+            font-weight: 600;
+            padding: 0.5rem;
+            border-radius: 0.5rem;
+            transition: background-color 0.2s;
+        }
+        details > summary:hover {
+            background-color: #374151;
+        }
+        .modal-backdrop {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 50;
+        }
+        .modal-content {
+            width: 90%;
+            max-width: 800px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="max-w-screen-2xl mx-auto">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-white">Card Game Strategy Simulator</h1>
+            <p class="text-lg text-gray-400 mt-2">Model and analyze betting strategies for the 'Between the Sheets' card game.</p>
+        </header>
+
+        <div id="main-grid" class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- Left Panel: Configuration -->
+            <div id="config-panel" class="lg:col-span-1 flex flex-col gap-8">
+                <!-- Game Settings -->
+                <div id="game-settings-card" class="card">
+                    <h2 class="text-2xl font-bold mb-4 border-b border-gray-600 pb-2">Game Settings</h2>
+                    <div class="space-y-4">
+                        <div>
+                            <label for="ante-amount" class="block font-medium mb-1">Ante Amount ($)</label>
+                            <input type="number" id="ante-amount" value="0.10" min="0.01" step="0.01">
+                        </div>
+                        <div>
+                            <label for="starting-pot" class="block font-medium mb-1">Extra Starting Pot ($)</label>
+                            <input type="number" id="starting-pot" value="0" min="0" step="0.01">
+                        </div>
+                        <h3 class="font-bold pt-2">Game End Conditions</h3>
+                        <div>
+                            <label for="min-total-bets" class="block font-medium mb-1">Min Total Bets Made</label>
+                            <input type="number" id="min-total-bets" value="50" min="1">
+                        </div>
+                        <div>
+                            <label for="min-pot-clear-value" class="block font-medium mb-1">Min Pot Size on Clear ($)</label>
+                            <input type="number" id="min-pot-clear-value" value="1000" min="0" step="0.01">
+                        </div>
+                        <div class="flex gap-4 pt-4">
+                             <button id="import-config-btn" class="btn btn-secondary flex-1">Import Config</button>
+                             <button id="export-config-btn" class="btn btn-secondary flex-1">Export Config</button>
+                             <input type="file" id="import-file-input" class="hidden" accept=".json">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Players -->
+                <div class="card">
+                    <h2 class="text-2xl font-bold mb-4 border-b border-gray-600 pb-2">Players</h2>
+                    <div id="player-list" class="space-y-3"></div>
+                    <button id="add-player-btn" class="btn btn-primary w-full mt-4">Add New Player</button>
+                </div>
+            </div>
+
+            <!-- Right Panel: Simulation & Results -->
+            <div id="results-panel" class="lg:col-span-2 flex flex-col gap-8">
+                <!-- Simulation Controls -->
+                <div class="card">
+                     <h2 class="text-2xl font-bold mb-4 border-b border-gray-600 pb-2">Simulation Controls</h2>
+                     <div class="flex flex-col md:flex-row gap-4 items-center">
+                        <div class="w-full md:w-auto flex-grow">
+                             <label for="simulation-count" class="block font-medium mb-1">Number of Games to Simulate</label>
+                             <input type="number" id="simulation-count" value="100" min="1" class="w-full">
+                        </div>
+                        <div class="w-full md:w-auto pt-0 md:pt-7">
+                            <button id="start-simulation-btn" class="btn btn-primary w-full">Start Simulation</button>
+                        </div>
+                        <div class="w-full md:w-auto pt-0 md:pt-7">
+                             <button id="stop-simulation-btn" class="btn btn-danger w-full" disabled>Stop Simulation</button>
+                        </div>
+                        <div id="toggle-config-btn-container" class="w-full md:w-auto pt-0 md:pt-7 hidden">
+                            <button id="toggle-config-btn" class="btn btn-secondary w-full">Show Config</button>
+                        </div>
+                     </div>
+                     <div id="progress-container" class="mt-4 hidden">
+                        <div class="flex justify-between mb-1">
+                            <span id="progress-text" class="text-base font-medium text-blue-400">Running...</span>
+                            <span id="progress-percentage" class="text-sm font-medium text-blue-400">0%</span>
+                        </div>
+                        <div class="w-full bg-gray-700 rounded-full h-2.5">
+                            <div id="progress-bar" class="bg-blue-600 h-2.5 rounded-full" style="width: 0%"></div>
+                        </div>
+                        <div class="flex justify-between text-sm text-gray-400 mt-2">
+                            <span id="elapsed-time-text">Elapsed: 0s</span>
+                            <span id="eta-text">ETA: N/A</span>
+                        </div>
+                     </div>
+                </div>
+                <!-- Results -->
+                <div id="results-container" class="card hidden">
+                     <h2 class="text-2xl font-bold mb-4 border-b border-gray-600 pb-2">Simulation Results</h2>
+                     <div class="space-y-6">
+                        <details open>
+                            <summary>Overall Game Statistics</summary>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4">
+                                <div id="game-length-heatmap" class="h-96"></div>
+                                <div id="antes-made-heatmap" class="h-96"></div>
+                                <div id="shuffles-heatmap" class="h-96"></div>
+                                <div id="game-time-heatmap" class="h-96"></div>
+                                <div id="pot-size-chart" class="md:col-span-2 h-96"></div>
+                                <div id="player-pot-chart" class="md:col-span-2 h-96"></div>
+                            </div>
+                        </details>
+                        <details>
+                            <summary>Player Statistics</summary>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4">
+                                <div id="gave-up-heatmap-container" class="h-96 hidden">
+                                    <div id="gave-up-heatmap" class="h-96"></div>
+                                </div>
+                                <div id="player-win-loss-container" class="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <!-- Player heatmaps go here -->
+                                </div>
+                                <div id="player-bet-amount-container" class="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <!-- Player bet amount heatmaps go here -->
+                                </div>
+                            </div>
+                        </details>
+                         <details>
+                            <summary>Spread Analysis</summary>
+                             <div class="overflow-x-auto pt-4">
+                                <table class="w-full text-sm text-left">
+                                    <thead class="text-xs uppercase bg-gray-700">
+                                        <tr>
+                                            <th rowspan="2" class="px-2 py-2 align-bottom border-r border-gray-600">Spread</th>
+                                            <th colspan="5" class="px-2 py-2 text-center border-b border-r border-gray-600">Measured</th>
+                                            <th colspan="5" class="px-2 py-2 text-center border-b border-r border-gray-600">Contextual</th>
+                                            <th colspan="4" class="px-2 py-2 text-center border-b border-gray-600">Theoretical</th>
+                                        </tr>
+                                        <tr>
+                                            <th class="px-2 py-2 text-center">Occur %</th>
+                                            <th class="px-2 py-2 text-center">W%</th>
+                                            <th class="px-2 py-2 text-center">L%</th>
+                                            <th class="px-2 py-2 text-center">DL%</th>
+                                            <th class="px-2 py-2 text-center">EV</th>
+                                            
+                                            <th class="px-2 py-2 text-center">Occur %</th>
+                                            <th class="px-2 py-2 text-center">W%</th>
+                                            <th class="px-2 py-2 text-center">L%</th>
+                                            <th class="px-2 py-2 text-center">DL%</th>
+                                            <th class="px-2 py-2 text-center">EV</th>
+
+                                            <th class="px-2 py-2 text-center">Occur %</th>
+                                            <th class="px-2 py-2 text-center">W%</th>
+                                            <th class="px-2 py-2 text-center">L%</th>
+                                            <th class="px-2 py-2 text-center">DL%</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="spread-analysis-table">
+                                        <!-- Rows will be generated by JS -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </details>
+                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Player Editor Modal -->
+    <div id="player-modal" class="modal-backdrop hidden">
+        <div class="card modal-content">
+            <h2 id="modal-title" class="text-2xl font-bold mb-4">Add Player</h2>
+            <div class="space-y-4">
+                <input type="hidden" id="player-id">
+                <div>
+                    <label for="player-name" class="block font-medium mb-1">Player Name</label>
+                    <input type="text" id="player-name" placeholder="e.g., Player 1">
+                </div>
+                <!-- Financials -->
+                <h3 class="font-bold pt-2 border-t border-gray-600">Financials</h3>
+                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label for="start-money" class="block font-medium mb-1">Starting Money ($)</label>
+                        <input type="number" id="start-money" value="100" step="0.01">
+                    </div>
+                    <div>
+                        <label for="stop-loss" class="block font-medium mb-1">Stop-Loss Threshold ($) (optional)</label>
+                        <input type="number" id="stop-loss" placeholder="e.g., -50" step="0.01">
+                    </div>
+                 </div>
+                 <h4 class="font-semibold pt-2">Re-buy Strategy</h4>
+                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label for="rebuy-strategy" class="block font-medium mb-1">Type</label>
+                        <select id="rebuy-strategy">
+                            <option value="cover_bet">Cover Bet Needed</option>
+                            <option value="fixed_amount">Fixed Amount</option>
+                            <option value="none">None</option>
+                        </select>
+                    </div>
+                     <div id="rebuy-amount-container">
+                        <label for="buy-in-amount" class="block font-medium mb-1">Re-buy Amount ($)</label>
+                        <input type="number" id="buy-in-amount" value="50" min="0.01" step="0.01">
+                    </div>
+                     <div>
+                        <label for="buy-in-count" class="block font-medium mb-1"># of Re-buys</label>
+                        <input type="number" id="buy-in-count" value="1" min="0">
+                        <label><input type="checkbox" id="buy-in-unlimited" class="w-auto mt-1"> Unlimited</label>
+                    </div>
+                 </div>
+
+                <!-- Card Counting -->
+                <h3 class="font-bold pt-4 border-t border-gray-600">Card Counting Strategy</h3>
+                <div>
+                    <label for="card-counting" class="block font-medium mb-1">Awareness of remaining cards</label>
+                    <select id="card-counting">
+                        <option value="none">None (Assumes full deck)</option>
+                        <option value="full">Full (Perfect knowledge of discard pile)</option>
+                        <option value="custom">Custom (Tracks specific ranks)</option>
+                    </select>
+                </div>
+                <div id="custom-ranks-container" class="hidden">
+                    <label for="custom-ranks" class="block font-medium mb-1">Ranks to track (comma-separated: 2-10, J, Q, K, A)</label>
+                    <input type="text" id="custom-ranks" placeholder="e.g., A, K, Q">
+                </div>
+                
+                <!-- Betting Strategy -->
+                <h3 class="font-bold pt-4 border-t border-gray-600">Betting Strategy per Spread</h3>
+                <p class="text-sm text-gray-400">Define the bet for each possible spread between two cards. Spread 0 is two cards of the same rank (e.g., 5-5), spread 1 is consecutive (e.g., 5-6), up to spread 12 (Ace-2).</p>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm text-left">
+                        <thead class="text-xs uppercase bg-gray-700">
+                            <tr>
+                                <th class="px-4 py-2">Spread</th>
+                                <th class="px-4 py-2">Strategy</th>
+                                <th class="px-4 py-2">Value</th>
+                                <th class="px-2 py-2 text-center">Theo. Occur %</th>
+                                <th class="px-2 py-2 text-center">Theo. Win%</th>
+                                <th class="px-2 py-2 text-center">Theo. Loss%</th>
+                                <th class="px-2 py-2 text-center">Theo. D-Loss%</th>
+                                <th class="px-2 py-2 text-center">Theo. EV</th>
+                            </tr>
+                        </thead>
+                        <tbody id="betting-strategy-table">
+                            <!-- Rows will be generated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="flex justify-end gap-4 pt-4">
+                    <button id="cancel-player-btn" class="btn btn-secondary">Cancel</button>
+                    <button id="save-player-btn" class="btn btn-primary">Save Player</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- This script tag contains the simulation logic that will be run in a Web Worker -->
+    <script id="simulator-worker" type="javascript/worker">
+        
+        // --- CORE GAME LOGIC ---
+        const SUITS = ['H', 'D', 'C', 'S'];
+        const RANKS = { '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10, 'J': 11, 'Q': 12, 'K': 13, 'A': 14 };
+        
+        class Deck {
+            constructor() { this.cards = []; this.discardPile = []; this.createDeck(); this.shuffle(); }
+            createDeck() { this.cards = []; for (const suit of SUITS) for (const rank in RANKS) this.cards.push({ rank: RANKS[rank], suit, name: `${rank}${suit}` }); }
+            shuffle() { for (let i = this.cards.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [this.cards[i], this.cards[j]] = [this.cards[j], this.cards[i]]; } }
+            draw(count = 1) { const d = this.cards.splice(-count); this.discardPile.push(...d); return d; }
+            reset() { this.createDeck(); this.shuffle(); this.discardPile = []; }
+        }
+
+        // --- SIMULATION LOGIC ---
+        function runSimulation(config) {
+            const { players: playerConfigs, game: gameConfig, simulationCount } = config;
+            
+            const theoreticalStats = calculateTheoreticalStats();
+            self.postMessage({ type: 'ready', data: { theoreticalStats } });
+
+            for (let i = 0; i < simulationCount; i++) {
+                if (self.shouldStop) break;
+
+                const startTime = performance.now();
+                const deck = new Deck();
+                let pot = gameConfig.startingPot;
+                let players = JSON.parse(JSON.stringify(playerConfigs)).map(p => ({ ...p, money: p.startMoney, isActive: true, buyInUsed: 0, rebuyAmountUsed: 0}));
+                
+                let currentGameStats = {
+                    gameNum: i + 1, potHistory: [], playerPotHistory: {}, spreads: {}, playerBets: {},
+                    length: 0, shuffles: 0, antesMade: 0, playersGaveUp: 0,
+                    playerFinalFinancials: {},
+                    aggregatedContextualOccurrences: Array(13).fill(0),
+                    totalHandsForContextual: 0
+                };
+                players.forEach(p => {
+                    currentGameStats.playerPotHistory[p.id] = [];
+                    currentGameStats.playerBets[p.id] = [];
+                });
+
+                function anteUp() {
+                    let activePlayers = players.filter(p => p.isActive);
+                    if (activePlayers.length === 0) return false;
+                    activePlayers.forEach(player => {
+                        handleRebuyIfNeeded(player, gameConfig.ante);
+                        if (player.money >= gameConfig.ante) {
+                            player.money -= gameConfig.ante; pot += gameConfig.ante;
+                        } else {
+                            if(player.isActive) { player.isActive = false; currentGameStats.playersGaveUp++; }
+                        }
+                    });
+                    currentGameStats.antesMade++;
+                    return players.some(p => p.isActive);
+                }
+                
+                function handleRebuyIfNeeded(player, amountNeeded) {
+                    if (player.money >= amountNeeded || player.rebuy.strategy === 'none' || player.buyInUsed >= player.rebuy.count) return;
+                    let rebuyAmount = (player.rebuy.strategy === 'cover_bet') ? amountNeeded - player.money : player.rebuy.amount;
+                    if (rebuyAmount > 0) {
+                        player.money += rebuyAmount; player.rebuyAmountUsed += rebuyAmount;
+                        if(player.rebuy.count !== Infinity) player.buyInUsed++;
+                    }
+                }
+
+                anteUp();
+                
+                let currentPlayerIndex = -1;
+                let gameRunning = true;
+
+                while (gameRunning) {
+                    if (self.shouldStop) { gameRunning = false; break; }
+                    
+                    currentPlayerIndex = (currentPlayerIndex + 1) % players.length;
+                    let currentPlayer = players[currentPlayerIndex];
+
+                    if (!currentPlayer.isActive) {
+                        if (players.every(p => !p.isActive)) { gameRunning = false; break; }
+                        continue;
+                    }
+
+                    if (deck.cards.length < 3) { deck.reset(); currentGameStats.shuffles++; }
+                    
+                    const contextualOccurrences = calculateContextualOccurrence(deck.cards);
+                    currentGameStats.totalHandsForContextual++;
+                    contextualOccurrences.forEach((p, i) => currentGameStats.aggregatedContextualOccurrences[i] += p);
+
+                    const [card1, card2] = deck.draw(2);
+                    const highRank = Math.max(card1.rank, card2.rank);
+                    const lowRank = Math.min(card1.rank, card2.rank);
+                    const spread = highRank - lowRank - 1;
+                    const userSpread = spread + 1;
+
+                    const betDecision = getPlayerBet(currentPlayer, spread, pot, gameConfig.ante, deck);
+                    const betAmount = betDecision.bet;
+                    currentGameStats.length++;
+
+                    handleRebuyIfNeeded(currentPlayer, betAmount);
+                    
+                    if (betAmount > 0 && currentPlayer.money >= betAmount) {
+                        currentGameStats.playerBets[currentPlayer.id].push(betAmount);
+                        currentPlayer.money -= betAmount;
+                        
+                        const contextualOutcomes = calculateContextualOutcomes(deck);
+                        const [card3] = deck.draw(1);
+                        
+                        let outcome;
+                        if (card3.rank === highRank || card3.rank === lowRank) { outcome = 'dloss'; pot += betAmount * 2; } 
+                        else if (card3.rank > lowRank && card3.rank < highRank) {
+                            outcome = 'win'; const winnings = betAmount; pot -= winnings; currentPlayer.money += betAmount + winnings;
+                            if (!currentGameStats.spreads[userSpread]) currentGameStats.spreads[userSpread] = {};
+                            currentGameStats.spreads[userSpread].maxWin = Math.max(currentGameStats.spreads[userSpread].maxWin || 0, winnings / gameConfig.ante);
+                        } else { outcome = 'loss'; pot += betAmount; }
+                        
+                        if (!currentGameStats.spreads[userSpread]) currentGameStats.spreads[userSpread] = { occurrences: 0, wins: 0, losses: 0, dlosses: 0, sumEVContextual: 0, sumCtxWin:0, sumCtxLoss:0, sumCtxDloss:0 };
+                        const s = currentGameStats.spreads[userSpread];
+                        s.occurrences++;
+                        s[outcome + 'es'] = (s[outcome + 'es'] || 0) + 1;
+                        s.sumCtxWin += contextualOutcomes.win;
+                        s.sumCtxLoss += contextualOutcomes.loss;
+                        s.sumCtxDloss += contextualOutcomes.dloss;
+
+                        const ev_contextual = calculateEVsForBet(betAmount, spread, deck, deck.cards).observed;
+                        s.sumEVContextual += ev_contextual;
+                    }
+                    
+                    currentGameStats.potHistory.push(pot);
+                    players.forEach(p => currentGameStats.playerPotHistory[p.id].push(p.startMoney - p.money + p.rebuyAmountUsed));
+
+                    if (currentPlayer.stopLoss !== null && currentPlayer.money < currentPlayer.stopLoss && currentPlayer.isActive) {
+                       currentGameStats.playersGaveUp++; currentPlayer.isActive = false;
+                    }
+
+                    if (pot <= 0) {
+                        if (currentGameStats.length >= gameConfig.minTotalBets || Math.abs(pot) >= gameConfig.minPotClearValue) gameRunning = false;
+                        else {
+                            if(!anteUp()) gameRunning = false;
+                            players.forEach(p => currentGameStats.playerPotHistory[p.id] = []);
+                        }
+                    }
+
+                    if (players.every(p => !p.isActive)) gameRunning = false;
+                    
+                    const { spreads, potHistory, playerPotHistory, ...restOfStats } = currentGameStats;
+                    self.postMessage({ type: 'tick', data: { ...restOfStats, latestPot: pot, spreads, playerPots: players.reduce((acc, p) => ({...acc, [p.id]: p.startMoney - p.money + p.rebuyAmountUsed}), {}), playerBets: currentGameStats.playerBets }});
+                }
+                
+                if (self.shouldStop) break;
+
+                currentGameStats.duration = (performance.now() - startTime) / 1000;
+                players.forEach(p => {
+                    currentGameStats.playerFinalFinancials[p.id] = { finalMoney: p.money, rebuyAmountUsed: p.rebuyAmountUsed, startMoney: p.startMoney };
+                });
+
+                self.postMessage({ type: 'gameComplete', data: { finalStats: currentGameStats, progress: (i + 1) / simulationCount, gameNum: i + 1, totalGames: simulationCount }});
+            }
+            self.postMessage({ type: 'complete' });
+        }
+        
+        function getPlayerBet(player, spread, pot, ante, deck) {
+            const strategy = player.bettingStrategy[spread + 1];
+            let bet = 0;
+
+            let perceivedDeck = [...deck.cards];
+            if (player.cardCounting === 'none') {
+                perceivedDeck = []; for (const suit of SUITS) for (const rank in RANKS) perceivedDeck.push({ rank: RANKS[rank], suit });
+            } else if (player.cardCounting === 'custom') {
+                const customRanksToTrack = player.customRanks.map(r => RANKS[r.toUpperCase()]).filter(Boolean);
+                const knownDiscards = deck.discardPile.filter(c => customRanksToTrack.includes(c.rank));
+                const fullDeckCards = []; for (const suit of SUITS) for (const rank in RANKS) fullDeckCards.push({ rank: RANKS[rank], suit, name: `${rank}${suit}` });
+                perceivedDeck = fullDeckCards.filter(card => !knownDiscards.some(d => d.name === card.name));
+            }
+
+            switch (strategy.type) {
+                case 'min': bet = ante; break;
+                case 'ante': bet = ante * strategy.value; break;
+                case 'pot': bet = pot * (strategy.value / 100); break;
+            }
+
+            bet = Math.max(0, Math.min(bet, pot));
+            bet = Math.floor(bet);
+            
+            const evs = calculateEVsForBet(bet, spread, deck, perceivedDeck);
+            return { bet, evs };
+        }
+        
+        function calculateEVsForBet(betAmount, spread, actualDeck, perceivedDeck) {
+            const lastTwoCards = actualDeck.discardPile.slice(-2);
+            if (lastTwoCards.length < 2) return { theoretical: 0, observed: 0 };
+            const highRank = Math.max(lastTwoCards[0].rank, lastTwoCards[1].rank);
+            const lowRank = Math.min(lastTwoCards[0].rank, lastTwoCards[1].rank);
+
+            function calculate(deck, bet) {
+                if (bet === 0) return 0;
+                let wins = 0, losses = 0, dlosses = 0;
+                deck.forEach(card => {
+                    if (card.rank === highRank || card.rank === lowRank) dlosses++;
+                    else if (card.rank > lowRank && card.rank < highRank) wins++;
+                    else losses++;
+                });
+                const total = deck.length;
+                if(total === 0) return 0;
+                const pWin = wins / total, pLoss = losses / total, pDLoss = dlosses / total;
+                return (pWin * bet) - (pLoss * bet) - (pDLoss * 2 * bet);
+            }
+            
+            const theoreticalDeck = [];
+            for (const suit of SUITS) for (const rank in RANKS) {
+                const card = { rank: RANKS[rank], suit, name: `${rank}${suit}` };
+                if (!lastTwoCards.some(c => c.name === card.name)) theoreticalDeck.push(card);
+            }
+            
+            return { theoretical: calculate(theoreticalDeck, betAmount), observed: calculate(perceivedDeck, betAmount) };
+        }
+
+        function calculateContextualOccurrence(deck) {
+            const occurrences = Array(13).fill(0);
+            const n = deck.length;
+            if (n < 2) return occurrences;
+            const totalPairs = n * (n - 1) / 2;
+            for (let i = 0; i < n; i++) {
+                for (let j = i + 1; j < n; j++) {
+                    const spread = Math.abs(deck[i].rank - deck[j].rank);
+                    if (spread > 0 && spread <= 13) {
+                        occurrences[spread-1]++;
+                    }
+                }
+            }
+            return occurrences.map(count => (count / totalPairs) * 100);
+        }
+
+        function calculateContextualOutcomes(deck) {
+            const lastTwoCards = deck.discardPile.slice(-2);
+            const highRank = Math.max(lastTwoCards[0].rank, lastTwoCards[1].rank);
+            const lowRank = Math.min(lastTwoCards[0].rank, lastTwoCards[1].rank);
+            let wins = 0, losses = 0, dlosses = 0;
+            deck.cards.forEach(card => {
+                if (card.rank === highRank || card.rank === lowRank) dlosses++;
+                else if (card.rank > lowRank && card.rank < highRank) wins++;
+                else losses++;
+            });
+            const total = deck.cards.length;
+            return {
+                win: (wins/total)*100, loss: (losses/total)*100, dloss: (dlosses/total)*100
+            }
+        }
+
+        function calculateTheoreticalStats() {
+            const stats = { occurrence: [], outcomes: [], ev: [] };
+            const totalPairs = (52 * 51) / 2;
+            for (let userSpread = 0; userSpread <= 12; userSpread++) {
+                let pairCount = 0;
+                if (userSpread === 0) pairCount = 13 * (4 * 3 / 2);
+                else { const rankDistance = userSpread; pairCount = (13 - rankDistance) * 4 * 4; }
+                stats.occurrence[userSpread] = (pairCount / totalPairs) * 100;
+                
+                let win_ranks = userSpread > 0 ? userSpread - 1 : 0;
+                let dloss_ranks = userSpread > 0 ? 2 : 1;
+                let loss_ranks = 13 - win_ranks - dloss_ranks;
+                stats.outcomes[userSpread] = { win: (win_ranks/13)*100, loss: (loss_ranks/13)*100, dloss: (dloss_ranks/13)*100 };
+                stats.ev[userSpread] = (win_ranks/13 * 1) - (loss_ranks/13 * 1) - (dloss_ranks/13 * 2);
+            }
+            return stats;
+        }
+
+        self.shouldStop = false;
+        self.onmessage = function(e) {
+            if (e.data.type === 'start') { self.shouldStop = false; runSimulation(e.data.config); } 
+            else if (e.data.type === 'stop') { self.shouldStop = true; }
+        };
+    </script>
+
+
+    <script type="module">
+        // --- UI & STATE MANAGEMENT ---
+        let players = [];
+        let simulationWorker = null;
+        let simulationTimer = null;
+        let simulationStartTime = 0;
+        const simulationTimings = [];
+        
+        let allCompletedGamesData = [];
+        let currentLiveGameData = null;
+        let currentLiveGamePotHistory = [];
+        let currentLivePlayerPotHistory = {};
+        let currentLivePlayerBets = {};
+        let theoreticalStats = null;
+
+
+        function calculateTheoreticalStatsForUI() {
+            const stats = [];
+            for (let userSpread = 0; userSpread <= 12; userSpread++) {
+                let win_ranks = userSpread > 0 ? userSpread - 1 : 0;
+                let dloss_ranks = userSpread > 0 ? 2 : 1;
+                let loss_ranks = 13 - win_ranks - dloss_ranks;
+                let ev = (win_ranks/13 * 1) - (loss_ranks/13 * 1) - (dloss_ranks/13 * 2);
+                 let pairCount = 0;
+                const totalPairs = (52 * 51) / 2;
+                if (userSpread === 0) pairCount = 13 * (4 * 3 / 2);
+                else { const rankDistance = userSpread; pairCount = (13 - rankDistance) * 4 * 4; }
+                
+                stats[userSpread] = { 
+                    win: (win_ranks/13) * 100, loss: (loss_ranks/13) * 100,
+                    dloss: (dloss_ranks/13) * 100, ev: ev,
+                    occur: (pairCount / totalPairs) * 100
+                };
+            }
+            return stats;
+        }
+
+        const DOM = {
+            mainGrid: document.getElementById('main-grid'),
+            configPanel: document.getElementById('config-panel'),
+            resultsPanel: document.getElementById('results-panel'),
+            toggleConfigBtnContainer: document.getElementById('toggle-config-btn-container'),
+            toggleConfigBtn: document.getElementById('toggle-config-btn'),
+            playerList: document.getElementById('player-list'),
+            addPlayerBtn: document.getElementById('add-player-btn'),
+            playerModal: document.getElementById('player-modal'),
+            modalTitle: document.getElementById('modal-title'),
+            savePlayerBtn: document.getElementById('save-player-btn'),
+            cancelPlayerBtn: document.getElementById('cancel-player-btn'),
+            playerId: document.getElementById('player-id'),
+            playerName: document.getElementById('player-name'),
+            startMoney: document.getElementById('start-money'),
+            stopLoss: document.getElementById('stop-loss'),
+            rebuyStrategy: document.getElementById('rebuy-strategy'),
+            rebuyAmountContainer: document.getElementById('rebuy-amount-container'),
+            buyInAmount: document.getElementById('buy-in-amount'),
+            buyInCount: document.getElementById('buy-in-count'),
+            buyInUnlimited: document.getElementById('buy-in-unlimited'),
+            cardCounting: document.getElementById('card-counting'),
+            customRanksContainer: document.getElementById('custom-ranks-container'),
+            customRanks: document.getElementById('custom-ranks'),
+            bettingStrategyTable: document.getElementById('betting-strategy-table'),
+            startSimBtn: document.getElementById('start-simulation-btn'),
+            stopSimBtn: document.getElementById('stop-simulation-btn'),
+            simCountInput: document.getElementById('simulation-count'),
+            progressContainer: document.getElementById('progress-container'),
+            progressBar: document.getElementById('progress-bar'),
+            progressText: document.getElementById('progress-text'),
+            progressPercentage: document.getElementById('progress-percentage'),
+            elapsedTimeText: document.getElementById('elapsed-time-text'),
+            etaText: document.getElementById('eta-text'),
+            resultsContainer: document.getElementById('results-container'),
+            anteAmount: document.getElementById('ante-amount'),
+            startingPot: document.getElementById('starting-pot'),
+            minTotalBets: document.getElementById('min-total-bets'),
+            minPotClearValue: document.getElementById('min-pot-clear-value'),
+            importConfigBtn: document.getElementById('import-config-btn'),
+            exportConfigBtn: document.getElementById('export-config-btn'),
+            importFileInput: document.getElementById('import-file-input'),
+            spreadAnalysisTable: document.getElementById('spread-analysis-table'),
+            playerWinLossContainer: document.getElementById('player-win-loss-container'),
+            playerBetAmountContainer: document.getElementById('player-bet-amount-container'),
+            gaveUpHeatmapContainer: document.getElementById('gave-up-heatmap-container'),
+            playerPotChart: document.getElementById('player-pot-chart'),
+        };
+
+        function initialize() {
+            setupEventListeners();
+            createBettingStrategyTable();
+            addDefaultPlayer();
+            renderPlayerList();
+        }
+
+        function setupEventListeners() {
+            DOM.addPlayerBtn.addEventListener('click', () => openPlayerModal());
+            DOM.savePlayerBtn.addEventListener('click', savePlayer);
+            DOM.cancelPlayerBtn.addEventListener('click', closePlayerModal);
+            DOM.buyInUnlimited.addEventListener('change', (e) => {
+                DOM.buyInCount.disabled = e.target.checked;
+            });
+            DOM.rebuyStrategy.addEventListener('change', (e) => {
+                const strategy = e.target.value;
+                DOM.rebuyAmountContainer.classList.toggle('hidden', strategy !== 'fixed_amount');
+                DOM.buyInCount.closest('div').classList.toggle('hidden', strategy === 'none');
+            });
+            DOM.cardCounting.addEventListener('change', (e) => {
+                DOM.customRanksContainer.classList.toggle('hidden', e.target.value !== 'custom');
+            });
+            DOM.startSimBtn.addEventListener('click', startSimulation);
+            DOM.stopSimBtn.addEventListener('click', stopSimulation);
+            DOM.exportConfigBtn.addEventListener('click', exportConfig);
+            DOM.importConfigBtn.addEventListener('click', () => DOM.importFileInput.click());
+            DOM.importFileInput.addEventListener('change', importConfig);
+            DOM.toggleConfigBtn.addEventListener('click', toggleConfigPanel);
+        }
+
+        function toggleConfigPanel() {
+            const isHidden = DOM.configPanel.classList.contains('hidden');
+            DOM.configPanel.classList.toggle('hidden', !isHidden);
+            DOM.resultsPanel.classList.toggle('lg:col-span-3', isHidden);
+            DOM.resultsPanel.classList.toggle('lg:col-span-2', !isHidden);
+            DOM.mainGrid.classList.toggle('lg:grid-cols-3', !isHidden);
+            DOM.toggleConfigBtn.textContent = isHidden ? 'Hide Config' : 'Show Config';
+        }
+
+        function createBettingStrategyTable() {
+            const tbody = DOM.bettingStrategyTable;
+            const theoreticalStats = calculateTheoreticalStatsForUI();
+            tbody.innerHTML = '';
+            for (let i = 0; i <= 12; i++) {
+                const stats = theoreticalStats[i];
+                const row = document.createElement('tr');
+                row.className = 'border-b border-gray-700'; row.style.verticalAlign = 'middle';
+                row.innerHTML = `
+                    <td class="px-4 py-2 font-medium">${i}</td>
+                    <td class="px-4 py-2"><select data-spread="${i}" class="strategy-type"><option value="min">Min Bet (Ante)</option><option value="ante"># of Antes</option><option value="pot">% of Pot</option></select></td>
+                    <td class="px-4 py-2"><div class="value-container"><input type="number" data-spread="${i}" class="strategy-value" min="0" value="1"></div></td>
+                    <td class="px-2 py-2 text-center text-sm">${stats.occur.toFixed(1)}%</td>
+                    <td class="px-2 py-2 text-center text-sm ${stats.win > 0 ? 'text-green-400' : 'text-gray-400'}">${stats.win.toFixed(1)}%</td>
+                    <td class="px-2 py-2 text-center text-sm ${stats.loss > 0 ? 'text-yellow-400' : 'text-gray-400'}">${stats.loss.toFixed(1)}%</td>
+                    <td class="px-2 py-2 text-center text-sm ${stats.dloss > 0 ? 'text-red-400' : 'text-gray-400'}">${stats.dloss.toFixed(1)}%</td>
+                    <td class="px-2 py-2 text-center text-sm font-mono ${stats.ev >= 0 ? 'text-green-400' : 'text-red-400'}">${stats.ev.toFixed(2)}</td>
+                `;
+                tbody.appendChild(row);
+            }
+            tbody.addEventListener('change', (e) => {
+                if (e.target.classList.contains('strategy-type')) {
+                    e.target.closest('tr').querySelector('.value-container').classList.toggle('hidden', e.target.value === 'min');
+                }
+            });
+        }
+        
+        function addDefaultPlayer(){
+             const defaultPlayer = {
+                id: `player-${Date.now()}`, name: 'Default Player (Bets on 7+ Spread)', startMoney: 100, stopLoss: null,
+                rebuy: { strategy: 'cover_bet', amount: 50, count: Infinity },
+                cardCounting: 'none', customRanks: [],
+                bettingStrategy: Array.from({ length: 13 }, (_, i) => ({ type: i >= 7 ? 'pot' : 'min', value: 25 }))
+            };
+            players.push(defaultPlayer);
+        }
+
+        function openPlayerModal(playerId = null) {
+            const isEditing = !!playerId;
+            DOM.modalTitle.textContent = isEditing ? 'Edit Player' : 'Add Player';
+            DOM.playerId.value = isEditing ? playerId : `player-${Date.now()}`;
+            
+            const player = isEditing ? players.find(p => p.id === playerId) : null;
+            const rebuy = player?.rebuy || { strategy: 'cover_bet', count: Infinity, amount: 50 };
+            
+            DOM.playerName.value = player?.name || '';
+            DOM.startMoney.value = player?.startMoney || 100;
+            DOM.stopLoss.value = player?.stopLoss || '';
+            
+            DOM.rebuyStrategy.value = rebuy.strategy;
+            DOM.buyInAmount.value = rebuy.amount;
+            DOM.rebuyAmountContainer.classList.toggle('hidden', rebuy.strategy !== 'fixed_amount');
+            DOM.buyInCount.closest('div').classList.toggle('hidden', rebuy.strategy === 'none');
+
+            if (rebuy.count === Infinity) {
+                DOM.buyInUnlimited.checked = true; DOM.buyInCount.disabled = true; DOM.buyInCount.value = 1;
+            } else {
+                DOM.buyInUnlimited.checked = false; DOM.buyInCount.disabled = false; DOM.buyInCount.value = rebuy.count || 1;
+            }
+
+            DOM.cardCounting.value = player?.cardCounting || 'none';
+            DOM.customRanks.value = player?.customRanks?.join(', ') || '';
+            DOM.customRanksContainer.classList.toggle('hidden', (player?.cardCounting || 'none') !== 'custom');
+            
+            const strategies = player?.bettingStrategy || Array(13).fill({ type: 'min', value: 1 });
+            for(let i=0; i<=12; i++){
+                const row = DOM.bettingStrategyTable.rows[i];
+                if (!row) continue;
+                row.querySelector(`.strategy-type`).value = strategies[i].type;
+                row.querySelector(`.strategy-value`).value = strategies[i].value;
+                row.querySelector('.value-container').classList.toggle('hidden', strategies[i].type === 'min');
+            }
+            DOM.playerModal.classList.remove('hidden');
+        }
+
+        function closePlayerModal() {
+            DOM.playerModal.classList.add('hidden');
+        }
+
+        function savePlayer() {
+            const id = DOM.playerId.value;
+            const isEditing = players.some(p => p.id === id);
+
+            const player = {
+                id,
+                name: DOM.playerName.value || `Player ${players.length + 1}`,
+                startMoney: parseFloat(DOM.startMoney.value),
+                stopLoss: DOM.stopLoss.value ? parseFloat(DOM.stopLoss.value) : null,
+                rebuy: {
+                    strategy: DOM.rebuyStrategy.value,
+                    amount: parseFloat(DOM.buyInAmount.value),
+                    count: DOM.buyInUnlimited.checked ? Infinity : parseInt(DOM.buyInCount.value)
+                },
+                cardCounting: DOM.cardCounting.value,
+                customRanks: DOM.customRanks.value.split(',').map(r => r.trim().toUpperCase()).filter(Boolean),
+                bettingStrategy: []
+            };
+            if(player.rebuy.strategy === 'none') player.rebuy.count = 0;
+
+            for (let i = 0; i <= 12; i++) {
+                player.bettingStrategy[i] = {
+                    type: DOM.bettingStrategyTable.querySelector(`select[data-spread="${i}"]`).value,
+                    value: parseFloat(DOM.bettingStrategyTable.querySelector(`input[data-spread="${i}"]`).value)
+                };
+            }
+            
+            if(isEditing) players = players.map(p => p.id === id ? player : p);
+            else players.push(player);
+            renderPlayerList();
+            closePlayerModal();
+        }
+
+        function renderPlayerList() {
+            DOM.playerList.innerHTML = '';
+            if (players.length === 0) DOM.playerList.innerHTML = `<p class="text-gray-400">No players yet. Add one to begin.</p>`;
+            players.forEach(player => {
+                const playerDiv = document.createElement('div');
+                playerDiv.className = 'flex justify-between items-center bg-gray-700 p-2 rounded-lg';
+                playerDiv.innerHTML = `<span class="font-medium">${player.name}</span> <div class="flex gap-2"> <button class="btn btn-secondary btn-sm" data-id="${player.id}">Edit</button> <button class="btn btn-danger btn-sm" data-id="${player.id}">Delete</button> </div>`;
+                playerDiv.querySelector('button.btn-secondary').addEventListener('click', (e) => openPlayerModal(e.target.dataset.id));
+                playerDiv.querySelector('button.btn-danger').addEventListener('click', (e) => {
+                    players = players.filter(p => p.id !== e.target.dataset.id); renderPlayerList();
+                });
+                DOM.playerList.appendChild(playerDiv);
+            });
+        }
+        
+        // --- SIMULATION HANDLING ---
+
+        function initWorker() {
+            if (simulationWorker) simulationWorker.terminate();
+            const workerScript = document.getElementById('simulator-worker').textContent;
+            const workerBlob = new Blob([workerScript], { type: 'application/javascript' });
+            simulationWorker = new Worker(URL.createObjectURL(workerBlob));
+            simulationWorker.onmessage = handleWorkerMessage;
+        }
+
+        function handleWorkerMessage(e) {
+            const { type, data } = e.data;
+            switch(type) {
+                case 'ready': 
+                    theoreticalStats = data.theoreticalStats; 
+                    break;
+                case 'tick': 
+                    currentLiveGamePotHistory.push(data.latestPot);
+                    Object.keys(data.playerPots).forEach(pId => {
+                        if (!currentLivePlayerPotHistory[pId]) currentLivePlayerPotHistory[pId] = [];
+                        currentLivePlayerPotHistory[pId].push(data.playerPots[pId]);
+                    });
+                    currentLivePlayerBets = data.playerBets;
+
+                    const { latestPot, playerPots, playerBets, ...rest } = data;
+                    currentLiveGameData = rest;
+                    redrawAllCharts(); 
+                    break;
+                case 'gameComplete':
+                    allCompletedGamesData.push(data.finalStats);
+                    currentLiveGameData = null; 
+                    currentLiveGamePotHistory = [];
+                    currentLivePlayerPotHistory = {};
+                    currentLivePlayerBets = {};
+                    simulationTimings.push(data.finalStats.duration);
+                    updateProgress(data);
+                    redrawAllCharts(); 
+                    break;
+                case 'complete': 
+                    finalizeSimulation(); 
+                    break;
+            }
+        }
+
+        function startSimulation() {
+            if (players.length === 0) { alert('Please add at least one player.'); return; }
+
+            if (DOM.configPanel.classList.contains('hidden') === false) {
+                 toggleConfigPanel();
+            }
+            DOM.toggleConfigBtnContainer.classList.remove('hidden');
+            DOM.startSimBtn.disabled = true;
+            DOM.stopSimBtn.disabled = false;
+            DOM.resultsContainer.classList.remove('hidden');
+            DOM.progressContainer.classList.remove('hidden');
+            
+            allCompletedGamesData = []; currentLiveGameData = null; simulationTimings.length = 0; theoreticalStats = null; currentLiveGamePotHistory = []; currentLivePlayerPotHistory = {}; currentLivePlayerBets = {};
+            
+            const toCents = val => Math.round(val * 100);
+            const gameConfig = { ante: toCents(parseFloat(DOM.anteAmount.value)), startingPot: toCents(parseFloat(DOM.startingPot.value)), minTotalBets: parseInt(DOM.minTotalBets.value), minPotClearValue: toCents(parseFloat(DOM.minPotClearValue.value)) };
+            const playersConfig = JSON.parse(JSON.stringify(players, (k,v) => v === Infinity ? "Infinity" : v)).map(p => {
+                p.startMoney = toCents(p.startMoney);
+                if (p.rebuy && p.rebuy.amount) p.rebuy.amount = toCents(p.rebuy.amount);
+                if (p.stopLoss !== null) p.stopLoss = toCents(p.stopLoss);
+                if (p.rebuy) p.rebuy.count = p.rebuy.count === "Infinity" ? Infinity : p.rebuy.count;
+                return p;
+            });
+
+            const config = { players: playersConfig, game: gameConfig, simulationCount: parseInt(DOM.simCountInput.value) };
+            
+            initWorker();
+            setupPlayerWinLossCharts();
+            setupPlayerBetAmountCharts();
+            simulationStartTime = performance.now();
+            updateProgress({progress: 0, gameNum: 0, totalGames: config.simulationCount});
+            simulationTimer = setInterval(() => {
+                const elapsedSeconds = Math.round((performance.now() - simulationStartTime) / 1000);
+                DOM.elapsedTimeText.textContent = `Elapsed: ${elapsedSeconds}s`;
+            }, 1000);
+            simulationWorker.postMessage({ type: 'start', config });
+        }
+        
+        function stopSimulation() {
+            if(simulationWorker) {
+                simulationWorker.terminate();
+                clearInterval(simulationTimer);
+                DOM.stopSimBtn.disabled = true;
+                DOM.startSimBtn.disabled = false;
+                DOM.progressText.textContent = "Stopped by user.";
+            }
+        }
+
+        function finalizeSimulation() {
+            clearInterval(simulationTimer);
+            DOM.startSimBtn.disabled = false;
+            DOM.stopSimBtn.disabled = true;
+            DOM.progressText.textContent = "Finished!";
+            const elapsedSeconds = Math.round((performance.now() - simulationStartTime) / 1000);
+            DOM.elapsedTimeText.textContent = `Total Time: ${elapsedSeconds}s`;
+            DOM.etaText.textContent = `ETA: 0s`;
+        }
+        
+        function updateProgress(data) {
+            const { progress, gameNum, totalGames } = data;
+            const percentage = Math.round(progress * 100);
+            DOM.progressBar.style.width = `${percentage}%`;
+            DOM.progressPercentage.textContent = `${percentage}%`;
+            DOM.progressText.textContent = `Simulating game ${gameNum + 1} of ${totalGames}...`;
+            
+            if (simulationTimings.length > 0) {
+                const avgTime = simulationTimings.reduce((a, b) => a + b, 0) / simulationTimings.length;
+                const etaSeconds = Math.round(avgTime * (totalGames - (gameNum + 1)));
+                DOM.etaText.textContent = `ETA: ${etaSeconds}s`;
+            } else if (gameNum > 0) {
+                const elapsed = (performance.now() - simulationStartTime) / 1000;
+                const timePerGame = elapsed / (gameNum + 1);
+                const etaSeconds = Math.round(timePerGame * (totalGames - (gameNum + 1)));
+                 DOM.etaText.textContent = `ETA: ${etaSeconds}s`;
+            } else {
+                DOM.etaText.textContent = 'ETA: Calculating...';
+            }
+        }
+        
+        function redrawAllCharts() {
+            if(!allCompletedGamesData.length && !currentLiveGameData) {
+                 [...document.querySelectorAll('.h-96')].forEach(el => Plotly.purge(el.id));
+                return;
+            }
+            
+             plotHeatmap('game-length-heatmap', 'Game Length (# of Bets)', allCompletedGamesData.map(g => g.length), currentLiveGameData?.length);
+             plotHeatmap('antes-made-heatmap', '# of Antes Made', allCompletedGamesData.map(g => g.antesMade), currentLiveGameData?.antesMade);
+             plotHeatmap('shuffles-heatmap', '# of Shuffles per Game', allCompletedGamesData.map(g => g.shuffles), currentLiveGameData?.shuffles);
+             plotHeatmap('game-time-heatmap', 'Game Simulation Time (s)', allCompletedGamesData.map(g => g.duration), null);
+            
+             const anyGaveUp = allCompletedGamesData.some(g => g.playersGaveUp > 0) || (currentLiveGameData && currentLiveGameData.playersGaveUp > 0);
+             DOM.gaveUpHeatmapContainer.classList.toggle('hidden', !anyGaveUp);
+             if (anyGaveUp) {
+                plotHeatmap('gave-up-heatmap', '# of Players Who Gave Up', allCompletedGamesData.map(g => g.playersGaveUp), currentLiveGameData?.playersGaveUp);
+             }
+
+             plotPotSize(allCompletedGamesData, currentLiveGameData);
+             plotPlayerPotChart(currentLiveGameData);
+             plotPlayerWinLossCharts();
+             plotPlayerBetAmountCharts();
+             if(theoreticalStats) updateSpreadAnalysisTable();
+        }
+
+
+        // --- PLOTTING ---
+        const PLOTLY_LAYOUT_CONFIG = { paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { color: '#d1d5db' }, xaxis: { gridcolor: '#374151' }, yaxis: { gridcolor: '#374151' }, margin: { l: 60, r: 20, b: 50, t: 60 } };
+        
+        function getHistogramData(data, numBins = 40) {
+            if (!data || data.length < 1) return { centers: [], counts: [] };
+            if (data.length < 2) return { centers: data, counts: data.map(() => 1) };
+            const maxVal = Math.max(...data), minVal = Math.min(...data);
+            if (maxVal === minVal) return { centers: [minVal], counts: [data.length] };
+            const binSize = (maxVal - minVal) / numBins;
+            if (binSize === 0) return { centers: [minVal], counts: [data.length] };
+            const centers = []; const counts = Array(numBins).fill(0);
+            for (let i = 0; i < numBins; i++) centers.push(minVal + (i + 0.5) * binSize);
+            for (const value of data) {
+                let binIndex = Math.floor((value - minVal) / binSize);
+                if (binIndex === numBins) binIndex--;
+                if (binIndex >= 0 && binIndex < numBins) counts[binIndex]++;
+            }
+            return { centers, counts };
+        }
+
+        function plotHeatmap(elementId, title, completedData, liveValue, tickPrefix = '') {
+            const { centers, counts } = getHistogramData(completedData);
+            const trace = {
+                x: centers, y: [''], z: [counts], type: 'heatmap',
+                colorscale: [[0, 'rgba(255, 255, 255, 0)'], [1, 'rgba(255, 255, 255, 1)']],
+                showscale: false, hoverinfo: 'x+z', hovertemplate: `Value: %{x:.2f}<br>Count: %{z}<extra></extra>`
+            };
+            const shapes = [];
+            if (liveValue !== null && liveValue !== undefined) {
+                 shapes.push({ type: 'line', yref: 'paper', x0: liveValue, x1: liveValue, y0: 0, y1: 1, line: { color: '#ef4444', width: 2, dash: 'dash' } });
+            }
+            const layout = { ...PLOTLY_LAYOUT_CONFIG, title, shapes, yaxis: { showticklabels: false }, xaxis: {...PLOTLY_LAYOUT_CONFIG.xaxis, tickprefix: tickPrefix} };
+            Plotly.react(elementId, [trace], layout, {responsive: true});
+        }
+        
+        function plotPotSize(completedGames, liveGame) {
+            const traces = completedGames.slice(-50).map(game => ({ y: game.potHistory.map(p => p/100), mode: 'lines', line: { width: 1, color: '#3b82f6' }, opacity: 0.3, hoverinfo: 'none' }));
+            if(liveGame) traces.push({ y: currentLiveGamePotHistory.map(p => p/100), mode: 'lines', line: { width: 2.5, color: '#ef4444' }, name: `Game ${liveGame.gameNum}` });
+            const layout = { ...PLOTLY_LAYOUT_CONFIG, title: 'Pot Size Over Time', showlegend: false, yaxis: {...PLOTLY_LAYOUT_CONFIG.yaxis, tickprefix: '$', tickformat: ',.2f' } };
+            Plotly.react('pot-size-chart', traces, layout, {responsive: true});
+        }
+        
+        function plotPlayerPotChart(liveGame) {
+            const traces = [];
+            
+            allCompletedGamesData.slice(-20).forEach(game => {
+                 players.forEach(player => {
+                     if(game.playerPotHistory[player.id]) {
+                        traces.push({ 
+                            y: game.playerPotHistory[player.id].map(p => p/100), 
+                            mode: 'lines', 
+                            line: { width: 1, color: '#3b82f6' },
+                            opacity: 0.2,
+                            hoverinfo: 'none',
+                            legendgroup: 'past'
+                        });
+                    }
+                });
+            });
+
+            if (liveGame) {
+                players.forEach(player => {
+                     traces.push({ 
+                        y: (currentLivePlayerPotHistory[player.id] || []).map(p => p/100), 
+                        mode: 'lines', 
+                        name: player.name
+                    });
+                });
+            }
+            const layout = { ...PLOTLY_LAYOUT_CONFIG, title: 'Player Equity in Pot', showlegend: true, yaxis: {...PLOTLY_LAYOUT_CONFIG.yaxis, tickprefix: '$', tickformat: ',.2f' } };
+            Plotly.react(DOM.playerPotChart, traces, layout, {responsive: true});
+        }
+        
+        function setupPlayerWinLossCharts() {
+            DOM.playerWinLossContainer.innerHTML = '';
+            players.forEach(player => {
+                const div = document.createElement('div');
+                div.id = `player-win-loss-${player.id}`;
+                div.className = 'h-96';
+                DOM.playerWinLossContainer.appendChild(div);
+            });
+        }
+
+        function plotPlayerWinLossCharts() {
+            players.forEach(player => {
+                const playerData = allCompletedGamesData.map(game => {
+                    const financial = game.playerFinalFinancials[player.id];
+                    if (!financial) return 0;
+                    return (financial.finalMoney - financial.startMoney - financial.rebuyAmountUsed) / 100;
+                });
+                plotHeatmap(`player-win-loss-${player.id}`, `${player.name}: Win/Loss ($)`, playerData, null, '$');
+            });
+        }
+        
+        function setupPlayerBetAmountCharts() {
+             DOM.playerBetAmountContainer.innerHTML = '';
+            players.forEach(player => {
+                const div = document.createElement('div');
+                div.id = `player-bet-amount-${player.id}`;
+                div.className = 'h-96';
+                DOM.playerBetAmountContainer.appendChild(div);
+            });
+        }
+
+        function plotPlayerBetAmountCharts() {
+            players.forEach(player => {
+                const allBets = allCompletedGamesData.flatMap(g => g.playerBets[player.id] || []).map(b => b/100);
+                let liveBet = null;
+                if(currentLivePlayerBets[player.id] && currentLivePlayerBets[player.id].length > 0){
+                    liveBet = currentLivePlayerBets[player.id].slice(-1)[0] / 100;
+                }
+                plotHeatmap(`player-bet-amount-${player.id}`, `${player.name}: Bet Amounts ($)`, allBets, liveBet, '$');
+            });
+        }
+
+        function updateSpreadAnalysisTable() {
+            const allGames = [...allCompletedGamesData];
+            if(currentLiveGameData) allGames.push(currentLiveGameData);
+
+            const observed = { occurrences: Array(13).fill(0), wins: Array(13).fill(0), losses: Array(13).fill(0), dlosses: Array(13).fill(0), sumEVContextual: Array(13).fill(0), maxWins: Array(13).fill(0), sumCtxWin: Array(13).fill(0), sumCtxLoss: Array(13).fill(0), sumCtxDloss: Array(13).fill(0), sumCtxOccur: Array(13).fill(0) };
+            let totalSpreads = 0;
+            let totalHandsForContextual = 0;
+            
+            allGames.forEach(game => {
+                totalHandsForContextual += game.totalHandsForContextual || 0;
+                (game.aggregatedContextualOccurrences || []).forEach((p, i) => observed.sumCtxOccur[i] += p);
+                for(const spreadKey in game.spreads) {
+                    const spreadData = game.spreads[spreadKey];
+                    const spreadIdx = parseInt(spreadKey);
+                    if(spreadIdx >= 0 && spreadIdx <= 12 && spreadData.occurrences) {
+                        const s = observed;
+                        s.occurrences[spreadIdx] += spreadData.occurrences;
+                        s.wins[spreadIdx] += spreadData.wins || 0;
+                        s.losses[spreadIdx] += spreadData.losses || 0;
+                        s.dlosses[spreadIdx] += spreadData.dlosses || 0;
+                        totalSpreads += spreadData.occurrences;
+                        s.sumEVContextual[spreadIdx] += spreadData.sumEVContextual || 0;
+                        s.maxWins[spreadIdx] = Math.max(observed.maxWins[spreadIdx], spreadData.maxWin || 0);
+                        s.sumCtxWin[spreadIdx] += spreadData.sumCtxWin || 0;
+                        s.sumCtxLoss[spreadIdx] += spreadData.sumCtxLoss || 0;
+                        s.sumCtxDloss[spreadIdx] += spreadData.sumCtxDloss || 0;
+                    }
+                }
+            });
+
+            const tbody = DOM.spreadAnalysisTable;
+            tbody.innerHTML = '';
+
+            const formatEV = (ev) => `<span class="font-mono ${ev >= 0 ? 'text-green-400' : 'text-red-400'}">${ev.toFixed(2)}</span>`;
+
+            for (let i = 0; i <= 12; i++) {
+                const totalOutcomes = observed.wins[i] + observed.losses[i] + observed.dlosses[i];
+                const measuredWinPct = totalOutcomes > 0 ? (observed.wins[i] / totalOutcomes) * 100 : 0;
+                const measuredLossPct = totalOutcomes > 0 ? (observed.losses[i] / totalOutcomes) * 100 : 0;
+                const measuredDlossPct = totalOutcomes > 0 ? (observed.dlosses[i] / totalOutcomes) * 100 : 0;
+                const measuredEV = (measuredWinPct/100 * 1) + (measuredLossPct/100 * -1) + (measuredDlossPct/100 * -2);
+                
+                const contextualOccur = totalHandsForContextual > 0 ? observed.sumCtxOccur[i] / totalHandsForContextual : 0;
+                const contextualWin = totalOutcomes > 0 ? observed.sumCtxWin[i] / totalOutcomes : 0;
+                const contextualLoss = totalOutcomes > 0 ? observed.sumCtxLoss[i] / totalOutcomes : 0;
+                const contextualDloss = totalOutcomes > 0 ? observed.sumCtxDloss[i] / totalOutcomes : 0;
+                const contextualEV = observed.occurrences[i] > 0 ? (observed.sumEVContextual[i] / observed.occurrences[i]) / 100 : 0;
+                
+                const theoretical = theoreticalStats;
+
+                const row = document.createElement('tr'); row.className = 'border-b border-gray-600';
+                row.innerHTML = `
+                    <td class="px-2 py-2 font-medium border-r border-gray-600">${i}</td>
+                    <td class="px-2 py-2 text-center">${totalSpreads > 0 ? ((observed.occurrences[i] / totalSpreads) * 100).toFixed(1) : '0.0'}%</td>
+                    <td class="px-2 py-2 text-center text-green-400">${measuredWinPct.toFixed(1)}%</td>
+                    <td class="px-2 py-2 text-center text-yellow-400">${measuredLossPct.toFixed(1)}%</td>
+                    <td class="px-2 py-2 text-center text-red-400">${measuredDlossPct.toFixed(1)}%</td>
+                    <td class="px-2 py-2 text-center border-r border-gray-600">${formatEV(measuredEV)}</td>
+
+                    <td class="px-2 py-2 text-center">${contextualOccur.toFixed(1)}%</td>
+                    <td class="px-2 py-2 text-center text-green-400">${contextualWin.toFixed(1)}%</td>
+                    <td class="px-2 py-2 text-center text-yellow-400">${contextualLoss.toFixed(1)}%</td>
+                    <td class="px-2 py-2 text-center text-red-400">${contextualDloss.toFixed(1)}%</td>
+                    <td class="px-2 py-2 text-center border-r border-gray-600">${formatEV(contextualEV)}</td>
+
+                    <td class="px-2 py-2 text-center">${theoretical.occurrence[i].toFixed(1)}%</td>
+                    <td class="px-2 py-2 text-center text-green-400">${theoretical.outcomes[i].win.toFixed(1)}%</td>
+                    <td class="px-2 py-2 text-center text-yellow-400">${theoretical.outcomes[i].loss.toFixed(1)}%</td>
+                    <td class="px-2 py-2 text-center text-red-400">${theoretical.outcomes[i].dloss.toFixed(1)}%</td>
+                `;
+                tbody.appendChild(row);
+            }
+        }
+        
+        // --- CONFIG IMPORT/EXPORT ---
+        function exportConfig() {
+            const config = {
+                game: { ante: DOM.anteAmount.value, startingPot: DOM.startingPot.value, minTotalBets: DOM.minTotalBets.value, minPotClearValue: DOM.minPotClearValue.value },
+                players: players
+            };
+            const jsonString = JSON.stringify(config, (key, value) => (value === Infinity ? 'Infinity' : value), 2);
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(jsonString);
+            const a = document.createElement('a'); a.setAttribute("href", dataStr); a.setAttribute("download", "card_sim_config.json");
+            document.body.appendChild(a); a.click(); a.remove();
+        }
+
+        function importConfig(event) {
+            const file = event.target.files[0]; if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const config = JSON.parse(e.target.result, (key, value) => (value === 'Infinity' ? Infinity : value));
+                    DOM.anteAmount.value = config.game.ante;
+                    DOM.startingPot.value = config.game.startingPot;
+                    DOM.minTotalBets.value = config.game.minTotalBets;
+                    DOM.minPotClearValue.value = config.game.minPotClearValue;
+                    players = config.players;
+                    renderPlayerList();
+                } catch(err) { alert('Error parsing configuration file.'); console.error(err); }
+            };
+            reader.readAsText(file);
+            event.target.value = '';
+        }
+
+        // --- RUN APP ---
+        initialize();
+    </script>
+
+</body>
+</html>
+
