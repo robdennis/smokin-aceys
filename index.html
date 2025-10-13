@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Card Game Strategy Simulator</title>
+    <!-- Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Plotly.js for charting -->
     <script src="https://cdn.plot.ly/plotly-2.33.0.min.js"></script>
     <style>
         /* Custom styles for better UX */
@@ -99,7 +101,9 @@
         </header>
 
         <div id="main-grid" class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- Left Panel: Configuration -->
             <div id="config-panel" class="lg:col-span-1 flex flex-col gap-8">
+                <!-- Game Settings -->
                 <div id="game-settings-card" class="card">
                     <h2 class="text-2xl font-bold mb-4 border-b border-gray-600 pb-2">Game Settings</h2>
                     <div class="space-y-4">
@@ -128,6 +132,7 @@
                     </div>
                 </div>
 
+                <!-- Players -->
                 <div class="card">
                     <h2 class="text-2xl font-bold mb-4 border-b border-gray-600 pb-2">Players</h2>
                     <div id="player-list" class="space-y-3"></div>
@@ -135,7 +140,9 @@
                 </div>
             </div>
 
+            <!-- Right Panel: Simulation & Results -->
             <div id="results-panel" class="lg:col-span-2 flex flex-col gap-8">
+                <!-- Simulation Controls -->
                 <div class="card">
                      <h2 class="text-2xl font-bold mb-4 border-b border-gray-600 pb-2">Simulation Controls</h2>
                      <div class="flex flex-col md:flex-row gap-4 items-center">
@@ -167,18 +174,54 @@
                         </div>
                      </div>
                 </div>
+                <!-- Results -->
                 <div id="results-container" class="card hidden">
                      <h2 class="text-2xl font-bold mb-4 border-b border-gray-600 pb-2">Simulation Results</h2>
                      <div class="space-y-6">
                         <details open>
                             <summary>Overall Game Statistics</summary>
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4">
+                                <div id="pot-size-chart" class="md:col-span-2 h-96"></div>
+                                <div class="md:col-span-2 overflow-x-auto pt-4">
+                                    <h3 class="text-xl font-bold mb-2 pl-2">Spread Analysis</h3>
+                                    <table class="w-full text-sm text-left">
+                                        <thead class="text-xs uppercase bg-gray-700">
+                                            <tr>
+                                                <th class="px-2 py-2 align-bottom border-r border-gray-600">Spread</th>
+                                                <th colspan="5" class="px-2 py-2 text-center border-b border-r border-gray-600">Measured</th>
+                                                <th colspan="5" class="px-2 py-2 text-center border-b border-r border-gray-600">Contextual</th>
+                                                <th colspan="5" class="px-2 py-2 text-center border-b border-gray-600">Theoretical</th>
+                                            </tr>
+                                            <tr>
+                                                <th class="px-2 py-2 border-r border-gray-600"></th>
+                                                <th class="px-2 py-2 text-center">Occur %</th>
+                                                <th class="px-2 py-2 text-center">W%</th>
+                                                <th class="px-2 py-2 text-center">L%</th>
+                                                <th class="px-2 py-2 text-center">DL%</th>
+                                                <th class="px-2 py-2 text-center">EV</th>
+
+                                                <th class="px-2 py-2 text-center">Occur %</th>
+                                                <th class="px-2 py-2 text-center">W%</th>
+                                                <th class="px-2 py-2 text-center">L%</th>
+                                                <th class="px-2 py-2 text-center">DL%</th>
+                                                <th class="px-2 py-2 text-center">EV</th>
+
+                                                <th class="px-2 py-2 text-center">Occur %</th>
+                                                <th class="px-2 py-2 text-center">W%</th>
+                                                <th class="px-2 py-2 text-center">L%</th>
+                                                <th class="px-2 py-2 text-center">DL%</th>
+                                                <th class="px-2 py-2 text-center">EV</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="spread-analysis-table">
+                                            <!-- Rows will be generated by JS -->
+                                        </tbody>
+                                    </table>
+                                </div>
                                 <div id="game-length-heatmap" class="h-96"></div>
                                 <div id="antes-made-heatmap" class="h-96"></div>
                                 <div id="shuffles-heatmap" class="h-96"></div>
                                 <div id="game-time-heatmap" class="h-96"></div>
-                                <div id="pot-size-chart" class="md:col-span-2 h-96"></div>
-                                <div id="player-pot-chart" class="md:col-span-2 h-96"></div>
                             </div>
                         </details>
                         <details>
@@ -188,46 +231,11 @@
                                     <div id="gave-up-heatmap" class="h-96"></div>
                                 </div>
                                 <div id="player-win-loss-container" class="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    </div>
+                                    <!-- Player heatmaps go here -->
+                                </div>
                                 <div id="player-bet-amount-container" class="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    </div>
-                            </div>
-                        </details>
-                         <details>
-                            <summary>Spread Analysis</summary>
-                             <div class="overflow-x-auto pt-4">
-                                <table class="w-full text-sm text-left">
-                                    <thead class="text-xs uppercase bg-gray-700">
-                                        <tr>
-                                            <th class="px-2 py-2 align-bottom border-r border-gray-600">Spread</th>
-                                            <th colspan="5" class="px-2 py-2 text-center border-b border-r border-gray-600">Measured</th>
-                                            <th colspan="5" class="px-2 py-2 text-center border-b border-r border-gray-600">Contextual</th>
-                                            <th colspan="5" class="px-2 py-2 text-center border-b border-gray-600">Theoretical</th>
-                                        </tr>
-                                        <tr>
-                                            <th class="px-2 py-2 border-r border-gray-600"></th>
-                                            <th class="px-2 py-2 text-center">Occur %</th>
-                                            <th class="px-2 py-2 text-center">W%</th>
-                                            <th class="px-2 py-2 text-center">L%</th>
-                                            <th class="px-2 py-2 text-center">DL%</th>
-                                            <th class="px-2 py-2 text-center">EV</th>
-
-                                            <th class="px-2 py-2 text-center">Occur %</th>
-                                            <th class="px-2 py-2 text-center">W%</th>
-                                            <th class="px-2 py-2 text-center">L%</th>
-                                            <th class="px-2 py-2 text-center">DL%</th>
-                                            <th class="px-2 py-2 text-center">EV</th>
-
-                                            <th class="px-2 py-2 text-center">Occur %</th>
-                                            <th class="px-2 py-2 text-center">W%</th>
-                                            <th class="px-2 py-2 text-center">L%</th>
-                                            <th class="px-2 py-2 text-center">DL%</th>
-                                            <th class="px-2 py-2 text-center">EV</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="spread-analysis-table">
-                                        </tbody>
-                                </table>
+                                    <!-- Player bet amount heatmaps go here -->
+                                </div>
                             </div>
                         </details>
                      </div>
@@ -236,6 +244,7 @@
         </div>
     </div>
 
+    <!-- Player Editor Modal -->
     <div id="player-modal" class="modal-backdrop hidden">
         <div class="card modal-content">
             <h2 id="modal-title" class="text-2xl font-bold mb-4">Add Player</h2>
@@ -245,6 +254,7 @@
                     <label for="player-name" class="block font-medium mb-1">Player Name</label>
                     <input type="text" id="player-name" placeholder="e.g., Player 1">
                 </div>
+                <!-- Financials -->
                 <h3 class="font-bold pt-2 border-t border-gray-600">Financials</h3>
                  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
@@ -277,6 +287,7 @@
                     </div>
                  </div>
 
+                <!-- Card Counting -->
                 <h3 class="font-bold pt-4 border-t border-gray-600">Card Counting Strategy</h3>
                 <div>
                     <label for="card-counting" class="block font-medium mb-1">Awareness of remaining cards</label>
@@ -291,6 +302,7 @@
                     <input type="text" id="custom-ranks" placeholder="e.g., A, K, Q">
                 </div>
 
+                <!-- Betting Strategy -->
                 <h3 class="font-bold pt-4 border-t border-gray-600">Betting Strategy per Spread</h3>
                 <p class="text-sm text-gray-400">Define the bet for each possible spread between two cards. Spread 0 is two cards of the same rank (e.g., 5-5), spread 1 is consecutive (e.g., 5-6), up to spread 12 (Ace-2).</p>
                 <div class="overflow-x-auto">
@@ -308,7 +320,8 @@
                             </tr>
                         </thead>
                         <tbody id="betting-strategy-table">
-                            </tbody>
+                            <!-- Rows will be generated by JS -->
+                        </tbody>
                     </table>
                 </div>
 
@@ -320,6 +333,7 @@
         </div>
     </div>
 
+    <!-- This script tag contains the simulation logic that will be run in a Web Worker -->
     <script id="simulator-worker" type="javascript/worker">
 
         // --- CORE GAME LOGIC ---
@@ -398,6 +412,7 @@
 
                 let currentPlayerIndex = -1;
                 let gameRunning = true;
+                let consecutiveZeroBets = 0;
 
                 while (gameRunning) {
                     if (self.shouldStop) { gameRunning = false; break; }
@@ -424,6 +439,18 @@
 
                     const betDecision = getPlayerBet(currentPlayer, spread, pot, gameConfig.ante, deck);
                     const betAmount = betDecision.bet;
+
+                    if (betAmount > 0) {
+                        consecutiveZeroBets = 0;
+                    } else {
+                        consecutiveZeroBets++;
+                    }
+
+                    if (consecutiveZeroBets > players.length * 5) { // Game stall detection
+                        gameRunning = false;
+                        continue;
+                    }
+
                     currentGameStats.length++;
 
                     handleRebuyIfNeeded(currentPlayer, betAmount);
@@ -518,7 +545,7 @@
             }
 
             bet = Math.max(0, Math.min(bet, pot));
-            bet = Math.floor(bet);
+            bet = Math.round(bet); // Use round instead of floor to prevent off-by-one errors with small pots
 
             const evs = calculateEVsForBet(bet, spread, deck, perceivedDeck);
             return { bet, evs };
@@ -697,7 +724,6 @@
             playerWinLossContainer: document.getElementById('player-win-loss-container'),
             playerBetAmountContainer: document.getElementById('player-bet-amount-container'),
             gaveUpHeatmapContainer: document.getElementById('gave-up-heatmap-container'),
-            playerPotChart: document.getElementById('player-pot-chart'),
         };
 
         function initialize() {
@@ -731,12 +757,20 @@
         }
 
         function toggleConfigPanel() {
-            const isHidden = DOM.configPanel.classList.contains('hidden');
-            DOM.configPanel.classList.toggle('hidden', !isHidden);
-            DOM.resultsPanel.classList.toggle('lg:col-span-3', isHidden);
-            DOM.resultsPanel.classList.toggle('lg:col-span-2', !isHidden);
-            DOM.mainGrid.classList.toggle('lg:grid-cols-3', !isHidden);
-            DOM.toggleConfigBtn.textContent = isHidden ? 'Show Config' : 'Hide Config';
+            const isVisible = !DOM.configPanel.classList.contains('hidden');
+            DOM.configPanel.classList.toggle('hidden');
+
+            if(isVisible) { // it was visible, now it's hidden
+                DOM.mainGrid.classList.remove('lg:grid-cols-3');
+                DOM.resultsPanel.classList.remove('lg:col-span-2');
+                DOM.toggleConfigBtn.textContent = 'Show Config';
+            } else { // it was hidden, now it's visible
+                DOM.mainGrid.classList.add('lg:grid-cols-3');
+                DOM.resultsPanel.classList.add('lg:col-span-2');
+                DOM.toggleConfigBtn.textContent = 'Hide Config';
+            }
+
+            setTimeout(() => window.dispatchEvent(new Event('resize')), 300);
         }
 
         function createBettingStrategyTable() {
@@ -776,7 +810,7 @@
                     "rebuy": {
                         "strategy": "cover_bet",
                         "amount": 50,
-                        "count": "Infinity"
+                        "count": Infinity
                     },
                     "cardCounting": "none",
                     "customRanks": [],
@@ -796,7 +830,7 @@
                     "rebuy": {
                         "strategy": "cover_bet",
                         "amount": 50,
-                        "count": "Infinity"
+                        "count": Infinity
                     },
                     "cardCounting": "none",
                     "customRanks": [],
@@ -829,7 +863,7 @@
             DOM.rebuyAmountContainer.classList.toggle('hidden', rebuy.strategy !== 'fixed_amount');
             DOM.buyInCount.closest('div').classList.toggle('hidden', rebuy.strategy === 'none');
 
-            if (rebuy.count === Infinity) {
+            if (rebuy.count === Infinity || rebuy.count === 'Infinity') {
                 DOM.buyInUnlimited.checked = true; DOM.buyInCount.disabled = true; DOM.buyInCount.value = 1;
             } else {
                 DOM.buyInUnlimited.checked = false; DOM.buyInCount.disabled = false; DOM.buyInCount.value = rebuy.count || 1;
@@ -1044,8 +1078,7 @@
                 plotHeatmap('gave-up-heatmap', '# of Players Who Gave Up', allCompletedGamesData.map(g => g.playersGaveUp), currentLiveGameData?.playersGaveUp);
              }
 
-             plotPotSize(allCompletedGamesData, currentLiveGameData);
-             plotPlayerPotChart(currentLiveGameData);
+             plotPotHistoryChart(allCompletedGamesData, currentLiveGameData);
              plotPlayerWinLossCharts();
              plotPlayerBetAmountCharts();
              if(theoreticalStats) updateSpreadAnalysisTable();
@@ -1054,6 +1087,36 @@
 
         // --- PLOTTING ---
         const PLOTLY_LAYOUT_CONFIG = { paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { color: '#d1d5db' }, xaxis: { gridcolor: '#374151' }, yaxis: { gridcolor: '#374151' }, margin: { l: 60, r: 20, b: 50, t: 60 } };
+
+        function simplifyData(data, maxPoints = 1000) {
+            if (!data || data.length <= maxPoints) {
+                return data;
+            }
+
+            const simplified = [data[0]];
+            const bucketSize = (data.length - 2) / (maxPoints - 2);
+
+            for (let i = 0; i < maxPoints - 2; i++) {
+                const bucketStartIndex = Math.floor(i * bucketSize) + 1;
+                const bucketEndIndex = Math.floor((i + 1) * bucketSize) + 1;
+                const bucket = data.slice(bucketStartIndex, bucketEndIndex);
+
+                if (bucket.length === 0) continue;
+
+                let minVal = Infinity, maxVal = -Infinity;
+                for (const val of bucket) {
+                    if (val < minVal) minVal = val;
+                    if (val > maxVal) maxVal = val;
+                }
+                simplified.push(minVal);
+                if (minVal !== maxVal) {
+                    simplified.push(maxVal);
+                }
+            }
+
+            simplified.push(data[data.length - 1]);
+            return simplified;
+        }
 
         function getHistogramData(data, numBins = 40) {
             if (!data || data.length < 1) return { centers: [], counts: [] };
@@ -1087,42 +1150,78 @@
             Plotly.react(elementId, [trace], layout, {responsive: true});
         }
 
-        function plotPotSize(completedGames, liveGame) {
-            const traces = completedGames.slice(-50).map(game => ({ y: game.potHistory.map(p => p/100), mode: 'lines', line: { width: 1, color: '#3b82f6' }, opacity: 0.3, hoverinfo: 'none' }));
-            if(liveGame) traces.push({ y: currentLiveGamePotHistory.map(p => p/100), mode: 'lines', line: { width: 2.5, color: '#ef4444' }, name: `Game ${liveGame.gameNum}` });
-            const layout = { ...PLOTLY_LAYOUT_CONFIG, title: 'Pot Size Over Time', showlegend: false, yaxis: {...PLOTLY_LAYOUT_CONFIG.yaxis, tickprefix: '$', tickformat: ',.2f' } };
-            Plotly.react('pot-size-chart', traces, layout, {responsive: true});
-        }
-
-        function plotPlayerPotChart(liveGame) {
+        function plotPotHistoryChart(completedGames, liveGame) {
             const traces = [];
+            const layout = { ...PLOTLY_LAYOUT_CONFIG, title: 'Pot Size History', yaxis: { ...PLOTLY_LAYOUT_CONFIG.yaxis, tickprefix: '$', tickformat: ',.2f' }, xaxis: {title: 'Game Progression (%)'}, showlegend: true };
 
-            allCompletedGamesData.slice(-20).forEach(game => {
-                 players.forEach(player => {
-                     if(game.playerPotHistory[player.id]) {
-                        traces.push({
-                            y: game.playerPotHistory[player.id].map(p => p/100),
-                            mode: 'lines',
-                            line: { width: 1, color: playerColors[player.id] },
-                            opacity: 0.2,
-                            hoverinfo: 'none',
-                        });
-                    }
+            if (completedGames.length > 0) {
+                const xBins = 100;
+                const yBins = 50;
+                const z = Array(yBins).fill(0).map(() => Array(xBins).fill(0));
+
+                let maxPot = 0;
+                completedGames.forEach(game => {
+                    if(game.potHistory.length === 0) return;
+                    const gameMaxPot = Math.max(...game.potHistory);
+                    if (gameMaxPot > maxPot) maxPot = gameMaxPot;
                 });
-            });
+                if (maxPot === 0) maxPot = 1;
 
-            if (liveGame) {
-                players.forEach(player => {
-                     traces.push({
-                        y: (currentLivePlayerPotHistory[player.id] || []).map(p => p/100),
-                        mode: 'lines',
-                        name: player.name,
-                        line: { color: playerColors[player.id] }
+                completedGames.forEach(game => {
+                    const gameLength = game.potHistory.length;
+                    if (gameLength === 0) return;
+                    game.potHistory.forEach((potValue, step) => {
+                        const xBin = Math.min(xBins - 1, Math.floor((step / gameLength) * xBins));
+                        const yBin = Math.min(yBins - 1, Math.floor((potValue / maxPot) * yBins));
+                        if (xBin >= 0 && yBin >= 0) {
+                            z[yBin][xBin]++;
+                        }
                     });
                 });
+
+                traces.push({
+                    z: z,
+                    type: 'heatmap',
+                    colorscale: [[0, 'rgba(255, 255, 255, 0)'], [1, 'rgba(255, 255, 255, 1)']],
+                    showscale: false,
+                    x: Array.from({length: xBins}, (_, i) => i * (100/xBins)),
+                    y: Array.from({length: yBins}, (_, i) => i * (maxPot / yBins / 100)),
+                    hovertemplate: 'Progression: %{x:.0f}%<br>Pot Size: ~%{y:$.2f}<br>Frequency: %{z}<extra></extra>',
+                    name: 'Historical Density'
+                });
             }
-            const layout = { ...PLOTLY_LAYOUT_CONFIG, title: 'Player Contribution to Pot', showlegend: false, yaxis: {...PLOTLY_LAYOUT_CONFIG.yaxis, tickprefix: '$', tickformat: ',.2f' } };
-            Plotly.react(DOM.playerPotChart, traces, layout, {responsive: true});
+
+            if(liveGame) {
+                const livePotHistory = simplifyData(currentLiveGamePotHistory.map(p => p/100));
+                const liveGameLength = livePotHistory.length;
+                if (liveGameLength > 1) {
+                    traces.push({
+                        x: livePotHistory.map((_, i) => (i / (liveGameLength - 1)) * 100),
+                        y: livePotHistory,
+                        mode: 'lines',
+                        line: { width: 2.5, color: '#ef4444' },
+                        name: `Live Pot (Game ${liveGame.gameNum})`
+                    });
+                }
+
+                players.forEach(player => {
+                    if (currentLivePlayerPotHistory[player.id]) {
+                        const liveHistory = simplifyData((currentLivePlayerPotHistory[player.id] || []).map(p => p/100));
+                        const liveGameLength = liveHistory.length;
+                        if (liveGameLength > 1) {
+                            traces.push({
+                                x: liveHistory.map((_, i) => (i / (liveGameLength - 1)) * 100),
+                                y: liveHistory,
+                                mode: 'lines',
+                                line: { width: 1.5, color: playerColors[player.id] },
+                                name: player.name
+                            });
+                        }
+                    }
+                });
+            }
+
+            Plotly.react('pot-size-chart', traces, layout, {responsive: true});
         }
 
         function setupPlayerWinLossCharts() {
@@ -1168,6 +1267,18 @@
         }
 
         function updateSpreadAnalysisTable() {
+            const getColorStyle = (value, baseline, cap) => {
+                if (baseline === 0 && value === 0) return { style: '', title: '' };
+                const diff = value - baseline;
+                const opacity = Math.min(1, Math.abs(diff) / cap);
+                if (opacity < 0.1) return { style: '', title: `Baseline: ${baseline.toFixed(2)}` };
+                const color = diff > 0 ? `rgba(0, 150, 0, ${opacity})` : `rgba(150, 0, 0, ${opacity})`;
+                return {
+                    style: `background-color: ${color};`,
+                    title: `Baseline: ${baseline.toFixed(2)}`
+                };
+            };
+
             const allGames = [...allCompletedGamesData];
             if(currentLiveGameData) allGames.push(currentLiveGameData);
 
@@ -1204,6 +1315,7 @@
 
             for (let i = 0; i <= 12; i++) {
                 const totalOutcomes = observed.wins[i] + observed.losses[i] + observed.dlosses[i];
+                const measuredOccurPct = totalSpreads > 0 ? (observed.occurrences[i] / totalSpreads) * 100 : 0;
                 const measuredWinPct = totalOutcomes > 0 ? (observed.wins[i] / totalOutcomes) * 100 : 0;
                 const measuredLossPct = totalOutcomes > 0 ? (observed.losses[i] / totalOutcomes) * 100 : 0;
                 const measuredDlossPct = totalOutcomes > 0 ? (observed.dlosses[i] / totalOutcomes) * 100 : 0;
@@ -1217,20 +1329,32 @@
 
                 const theoretical = theoreticalStats;
 
+                const mOccurStyle = getColorStyle(measuredOccurPct, contextualOccur, 10);
+                const mWinStyle = getColorStyle(measuredWinPct, contextualWin, 20);
+                const mLossStyle = getColorStyle(measuredLossPct, contextualLoss, 20);
+                const mDlossStyle = getColorStyle(measuredDlossPct, contextualDloss, 20);
+                const mEVStyle = getColorStyle(measuredEV, contextualEV, 0.5);
+
+                const cOccurStyle = getColorStyle(contextualOccur, theoretical.occurrence[i], 5);
+                const cWinStyle = getColorStyle(contextualWin, theoretical.outcomes[i].win, 10);
+                const cLossStyle = getColorStyle(contextualLoss, theoretical.outcomes[i].loss, 10);
+                const cDlossStyle = getColorStyle(contextualDloss, theoretical.outcomes[i].dloss, 10);
+                const cEVStyle = getColorStyle(contextualEV, theoretical.ev[i], 0.5);
+
                 const row = document.createElement('tr'); row.className = 'border-b border-gray-600';
                 row.innerHTML = `
                     <td class="px-2 py-2 font-medium border-r border-gray-600">${i}</td>
-                    <td class="px-2 py-2 text-center">${totalSpreads > 0 ? ((observed.occurrences[i] / totalSpreads) * 100).toFixed(1) : '0.0'}%</td>
-                    <td class="px-2 py-2 text-center text-green-400">${measuredWinPct.toFixed(1)}%</td>
-                    <td class="px-2 py-2 text-center text-yellow-400">${measuredLossPct.toFixed(1)}%</td>
-                    <td class="px-2 py-2 text-center text-red-400">${measuredDlossPct.toFixed(1)}%</td>
-                    <td class="px-2 py-2 text-center border-r border-gray-600">${formatEV(measuredEV)}</td>
+                    <td class="px-2 py-2 text-center" style="${mOccurStyle.style}" title="${mOccurStyle.title}">${measuredOccurPct.toFixed(1)}%</td>
+                    <td class="px-2 py-2 text-center text-green-400" style="${mWinStyle.style}" title="${mWinStyle.title}">${measuredWinPct.toFixed(1)}%</td>
+                    <td class="px-2 py-2 text-center text-yellow-400" style="${mLossStyle.style}" title="${mLossStyle.title}">${measuredLossPct.toFixed(1)}%</td>
+                    <td class="px-2 py-2 text-center text-red-400" style="${mDlossStyle.style}" title="${mDlossStyle.title}">${measuredDlossPct.toFixed(1)}%</td>
+                    <td class="px-2 py-2 text-center border-r border-gray-600" style="${mEVStyle.style}" title="${mEVStyle.title}">${formatEV(measuredEV)}</td>
 
-                    <td class="px-2 py-2 text-center">${contextualOccur.toFixed(1)}%</td>
-                    <td class="px-2 py-2 text-center text-green-400">${contextualWin.toFixed(1)}%</td>
-                    <td class="px-2 py-2 text-center text-yellow-400">${contextualLoss.toFixed(1)}%</td>
-                    <td class="px-2 py-2 text-center text-red-400">${contextualDloss.toFixed(1)}%</td>
-                    <td class="px-2 py-2 text-center border-r border-gray-600">${formatEV(contextualEV)}</td>
+                    <td class="px-2 py-2 text-center" style="${cOccurStyle.style}" title="${cOccurStyle.title}">${contextualOccur.toFixed(1)}%</td>
+                    <td class="px-2 py-2 text-center text-green-400" style="${cWinStyle.style}" title="${cWinStyle.title}">${contextualWin.toFixed(1)}%</td>
+                    <td class="px-2 py-2 text-center text-yellow-400" style="${cLossStyle.style}" title="${cLossStyle.title}">${contextualLoss.toFixed(1)}%</td>
+                    <td class="px-2 py-2 text-center text-red-400" style="${cDlossStyle.style}" title="${cDlossStyle.title}">${contextualDloss.toFixed(1)}%</td>
+                    <td class="px-2 py-2 text-center border-r border-gray-600" style="${cEVStyle.style}" title="${cEVStyle.title}">${formatEV(contextualEV)}</td>
 
                     <td class="px-2 py-2 text-center">${theoretical.occurrence[i].toFixed(1)}%</td>
                     <td class="px-2 py-2 text-center text-green-400">${theoretical.outcomes[i].win.toFixed(1)}%</td>
@@ -1278,3 +1402,4 @@
 
 </body>
 </html>
+
