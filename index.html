@@ -209,18 +209,13 @@
                                 <table class="w-full text-sm text-left">
                                     <thead class="text-xs uppercase bg-gray-700">
                                         <tr>
-                                            <th rowspan="2" class="px-2 py-2 align-bottom border-r border-gray-600">Spread</th>
+                                            <th class="px-2 py-2 align-bottom border-r border-gray-600">Spread</th>
                                             <th colspan="5" class="px-2 py-2 text-center border-b border-r border-gray-600">Measured</th>
                                             <th colspan="5" class="px-2 py-2 text-center border-b border-r border-gray-600">Contextual</th>
-                                            <th colspan="4" class="px-2 py-2 text-center border-b border-gray-600">Theoretical</th>
+                                            <th colspan="5" class="px-2 py-2 text-center border-b border-gray-600">Theoretical</th>
                                         </tr>
                                         <tr>
-                                            <th class="px-2 py-2 text-center">Occur %</th>
-                                            <th class="px-2 py-2 text-center">W%</th>
-                                            <th class="px-2 py-2 text-center">L%</th>
-                                            <th class="px-2 py-2 text-center">DL%</th>
-                                            <th class="px-2 py-2 text-center">EV</th>
-                                            
+                                            <th class="px-2 py-2 border-r border-gray-600"></th>
                                             <th class="px-2 py-2 text-center">Occur %</th>
                                             <th class="px-2 py-2 text-center">W%</th>
                                             <th class="px-2 py-2 text-center">L%</th>
@@ -231,6 +226,13 @@
                                             <th class="px-2 py-2 text-center">W%</th>
                                             <th class="px-2 py-2 text-center">L%</th>
                                             <th class="px-2 py-2 text-center">DL%</th>
+                                            <th class="px-2 py-2 text-center">EV</th>
+
+                                            <th class="px-2 py-2 text-center">Occur %</th>
+                                            <th class="px-2 py-2 text-center">W%</th>
+                                            <th class="px-2 py-2 text-center">L%</th>
+                                            <th class="px-2 py-2 text-center">DL%</th>
+                                            <th class="px-2 py-2 text-center">EV</th>
                                         </tr>
                                     </thead>
                                     <tbody id="spread-analysis-table">
@@ -302,7 +304,7 @@
                     <label for="custom-ranks" class="block font-medium mb-1">Ranks to track (comma-separated: 2-10, J, Q, K, A)</label>
                     <input type="text" id="custom-ranks" placeholder="e.g., A, K, Q">
                 </div>
-                
+
                 <!-- Betting Strategy -->
                 <h3 class="font-bold pt-4 border-t border-gray-600">Betting Strategy per Spread</h3>
                 <p class="text-sm text-gray-400">Define the bet for each possible spread between two cards. Spread 0 is two cards of the same rank (e.g., 5-5), spread 1 is consecutive (e.g., 5-6), up to spread 12 (Ace-2).</p>
@@ -333,14 +335,14 @@
             </div>
         </div>
     </div>
-    
+
     <!-- This script tag contains the simulation logic that will be run in a Web Worker -->
     <script id="simulator-worker" type="javascript/worker">
-        
+
         // --- CORE GAME LOGIC ---
         const SUITS = ['H', 'D', 'C', 'S'];
         const RANKS = { '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10, 'J': 11, 'Q': 12, 'K': 13, 'A': 14 };
-        
+
         class Deck {
             constructor() { this.cards = []; this.discardPile = []; this.createDeck(); this.shuffle(); }
             createDeck() { this.cards = []; for (const suit of SUITS) for (const rank in RANKS) this.cards.push({ rank: RANKS[rank], suit, name: `${rank}${suit}` }); }
@@ -352,7 +354,7 @@
         // --- SIMULATION LOGIC ---
         function runSimulation(config) {
             const { players: playerConfigs, game: gameConfig, simulationCount } = config;
-            
+
             const theoreticalStats = calculateTheoreticalStats();
             self.postMessage({ type: 'ready', data: { theoreticalStats } });
 
@@ -363,7 +365,8 @@
                 const deck = new Deck();
                 let pot = gameConfig.startingPot;
                 let players = JSON.parse(JSON.stringify(playerConfigs)).map(p => ({ ...p, money: p.startMoney, isActive: true, buyInUsed: 0, rebuyAmountUsed: 0}));
-                
+                let playerContributions = players.reduce((acc, p) => ({ ...acc, [p.id]: 0 }), {});
+
                 let currentGameStats = {
                     gameNum: i + 1, potHistory: [], playerPotHistory: {}, spreads: {}, playerBets: {},
                     length: 0, shuffles: 0, antesMade: 0, playersGaveUp: 0,
@@ -382,7 +385,9 @@
                     activePlayers.forEach(player => {
                         handleRebuyIfNeeded(player, gameConfig.ante);
                         if (player.money >= gameConfig.ante) {
-                            player.money -= gameConfig.ante; pot += gameConfig.ante;
+                            player.money -= gameConfig.ante;
+                            pot += gameConfig.ante;
+                            playerContributions[player.id] += gameConfig.ante;
                         } else {
                             if(player.isActive) { player.isActive = false; currentGameStats.playersGaveUp++; }
                         }
@@ -390,10 +395,16 @@
                     currentGameStats.antesMade++;
                     return players.some(p => p.isActive);
                 }
-                
+
                 function handleRebuyIfNeeded(player, amountNeeded) {
-                    if (player.money >= amountNeeded || player.rebuy.strategy === 'none' || player.buyInUsed >= player.rebuy.count) return;
-                    let rebuyAmount = (player.rebuy.strategy === 'cover_bet') ? amountNeeded - player.money : player.rebuy.amount;
+                    if (player.money >= amountNeeded || !player.rebuy || player.rebuy.strategy === 'none' || player.buyInUsed >= player.rebuy.count) return;
+                    let rebuyAmount = 0;
+                    if (player.rebuy.strategy === 'cover_bet') {
+                         rebuyAmount = Math.max(0, amountNeeded - player.money);
+                    } else if (player.rebuy.strategy === 'fixed_amount') {
+                        rebuyAmount = player.rebuy.amount;
+                    }
+
                     if (rebuyAmount > 0) {
                         player.money += rebuyAmount; player.rebuyAmountUsed += rebuyAmount;
                         if(player.rebuy.count !== Infinity) player.buyInUsed++;
@@ -401,13 +412,13 @@
                 }
 
                 anteUp();
-                
+
                 let currentPlayerIndex = -1;
                 let gameRunning = true;
 
                 while (gameRunning) {
                     if (self.shouldStop) { gameRunning = false; break; }
-                    
+
                     currentPlayerIndex = (currentPlayerIndex + 1) % players.length;
                     let currentPlayer = players[currentPlayerIndex];
 
@@ -417,7 +428,7 @@
                     }
 
                     if (deck.cards.length < 3) { deck.reset(); currentGameStats.shuffles++; }
-                    
+
                     const contextualOccurrences = calculateContextualOccurrence(deck.cards);
                     currentGameStats.totalHandsForContextual++;
                     contextualOccurrences.forEach((p, i) => currentGameStats.aggregatedContextualOccurrences[i] += p);
@@ -433,22 +444,30 @@
                     currentGameStats.length++;
 
                     handleRebuyIfNeeded(currentPlayer, betAmount);
-                    
+
                     if (betAmount > 0 && currentPlayer.money >= betAmount) {
                         currentGameStats.playerBets[currentPlayer.id].push(betAmount);
                         currentPlayer.money -= betAmount;
-                        
+
                         const contextualOutcomes = calculateContextualOutcomes(deck);
                         const [card3] = deck.draw(1);
-                        
+
                         let outcome;
-                        if (card3.rank === highRank || card3.rank === lowRank) { outcome = 'dloss'; pot += betAmount * 2; } 
+                        if (card3.rank === highRank || card3.rank === lowRank) {
+                            outcome = 'dloss';
+                            pot += betAmount * 2;
+                            playerContributions[currentPlayer.id] += betAmount * 2;
+                        }
                         else if (card3.rank > lowRank && card3.rank < highRank) {
                             outcome = 'win'; const winnings = betAmount; pot -= winnings; currentPlayer.money += betAmount + winnings;
                             if (!currentGameStats.spreads[userSpread]) currentGameStats.spreads[userSpread] = {};
                             currentGameStats.spreads[userSpread].maxWin = Math.max(currentGameStats.spreads[userSpread].maxWin || 0, winnings / gameConfig.ante);
-                        } else { outcome = 'loss'; pot += betAmount; }
-                        
+                        } else {
+                            outcome = 'loss';
+                            pot += betAmount;
+                            playerContributions[currentPlayer.id] += betAmount;
+                        }
+
                         if (!currentGameStats.spreads[userSpread]) currentGameStats.spreads[userSpread] = { occurrences: 0, wins: 0, losses: 0, dlosses: 0, sumEVContextual: 0, sumCtxWin:0, sumCtxLoss:0, sumCtxDloss:0 };
                         const s = currentGameStats.spreads[userSpread];
                         s.occurrences++;
@@ -460,9 +479,9 @@
                         const ev_contextual = calculateEVsForBet(betAmount, spread, deck, deck.cards).observed;
                         s.sumEVContextual += ev_contextual;
                     }
-                    
+
                     currentGameStats.potHistory.push(pot);
-                    players.forEach(p => currentGameStats.playerPotHistory[p.id].push(p.startMoney - p.money + p.rebuyAmountUsed));
+                    players.forEach(p => currentGameStats.playerPotHistory[p.id].push(playerContributions[p.id]));
 
                     if (currentPlayer.stopLoss !== null && currentPlayer.money < currentPlayer.stopLoss && currentPlayer.isActive) {
                        currentGameStats.playersGaveUp++; currentPlayer.isActive = false;
@@ -472,16 +491,17 @@
                         if (currentGameStats.length >= gameConfig.minTotalBets || Math.abs(pot) >= gameConfig.minPotClearValue) gameRunning = false;
                         else {
                             if(!anteUp()) gameRunning = false;
+                            playerContributions = players.reduce((acc, p) => ({ ...acc, [p.id]: 0 }), {});
                             players.forEach(p => currentGameStats.playerPotHistory[p.id] = []);
                         }
                     }
 
                     if (players.every(p => !p.isActive)) gameRunning = false;
-                    
+
                     const { spreads, potHistory, playerPotHistory, ...restOfStats } = currentGameStats;
-                    self.postMessage({ type: 'tick', data: { ...restOfStats, latestPot: pot, spreads, playerPots: players.reduce((acc, p) => ({...acc, [p.id]: p.startMoney - p.money + p.rebuyAmountUsed}), {}), playerBets: currentGameStats.playerBets }});
+                    self.postMessage({ type: 'tick', data: { ...restOfStats, latestPot: pot, spreads, playerPots: playerContributions, playerBets: currentGameStats.playerBets }});
                 }
-                
+
                 if (self.shouldStop) break;
 
                 currentGameStats.duration = (performance.now() - startTime) / 1000;
@@ -493,7 +513,7 @@
             }
             self.postMessage({ type: 'complete' });
         }
-        
+
         function getPlayerBet(player, spread, pot, ante, deck) {
             const strategy = player.bettingStrategy[spread + 1];
             let bet = 0;
@@ -516,11 +536,11 @@
 
             bet = Math.max(0, Math.min(bet, pot));
             bet = Math.floor(bet);
-            
+
             const evs = calculateEVsForBet(bet, spread, deck, perceivedDeck);
             return { bet, evs };
         }
-        
+
         function calculateEVsForBet(betAmount, spread, actualDeck, perceivedDeck) {
             const lastTwoCards = actualDeck.discardPile.slice(-2);
             if (lastTwoCards.length < 2) return { theoretical: 0, observed: 0 };
@@ -540,13 +560,13 @@
                 const pWin = wins / total, pLoss = losses / total, pDLoss = dlosses / total;
                 return (pWin * bet) - (pLoss * bet) - (pDLoss * 2 * bet);
             }
-            
+
             const theoreticalDeck = [];
             for (const suit of SUITS) for (const rank in RANKS) {
                 const card = { rank: RANKS[rank], suit, name: `${rank}${suit}` };
                 if (!lastTwoCards.some(c => c.name === card.name)) theoreticalDeck.push(card);
             }
-            
+
             return { theoretical: calculate(theoreticalDeck, betAmount), observed: calculate(perceivedDeck, betAmount) };
         }
 
@@ -578,8 +598,10 @@
             });
             const total = deck.cards.length;
             return {
-                win: (wins/total)*100, loss: (losses/total)*100, dloss: (dlosses/total)*100
-            }
+                win: total > 0 ? (wins/total)*100 : 0,
+                loss: total > 0 ? (losses/total)*100 : 0,
+                dloss: total > 0 ? (dlosses/total)*100 : 0
+            };
         }
 
         function calculateTheoreticalStats() {
@@ -590,7 +612,7 @@
                 if (userSpread === 0) pairCount = 13 * (4 * 3 / 2);
                 else { const rankDistance = userSpread; pairCount = (13 - rankDistance) * 4 * 4; }
                 stats.occurrence[userSpread] = (pairCount / totalPairs) * 100;
-                
+
                 let win_ranks = userSpread > 0 ? userSpread - 1 : 0;
                 let dloss_ranks = userSpread > 0 ? 2 : 1;
                 let loss_ranks = 13 - win_ranks - dloss_ranks;
@@ -602,7 +624,7 @@
 
         self.shouldStop = false;
         self.onmessage = function(e) {
-            if (e.data.type === 'start') { self.shouldStop = false; runSimulation(e.data.config); } 
+            if (e.data.type === 'start') { self.shouldStop = false; runSimulation(e.data.config); }
             else if (e.data.type === 'stop') { self.shouldStop = true; }
         };
     </script>
@@ -615,13 +637,14 @@
         let simulationTimer = null;
         let simulationStartTime = 0;
         const simulationTimings = [];
-        
+
         let allCompletedGamesData = [];
         let currentLiveGameData = null;
         let currentLiveGamePotHistory = [];
         let currentLivePlayerPotHistory = {};
         let currentLivePlayerBets = {};
         let theoreticalStats = null;
+        let playerColors = {};
 
 
         function calculateTheoreticalStatsForUI() {
@@ -635,8 +658,8 @@
                 const totalPairs = (52 * 51) / 2;
                 if (userSpread === 0) pairCount = 13 * (4 * 3 / 2);
                 else { const rankDistance = userSpread; pairCount = (13 - rankDistance) * 4 * 4; }
-                
-                stats[userSpread] = { 
+
+                stats[userSpread] = {
                     win: (win_ranks/13) * 100, loss: (loss_ranks/13) * 100,
                     dloss: (dloss_ranks/13) * 100, ev: ev,
                     occur: (pairCount / totalPairs) * 100
@@ -730,7 +753,7 @@
             DOM.resultsPanel.classList.toggle('lg:col-span-3', isHidden);
             DOM.resultsPanel.classList.toggle('lg:col-span-2', !isHidden);
             DOM.mainGrid.classList.toggle('lg:grid-cols-3', !isHidden);
-            DOM.toggleConfigBtn.textContent = isHidden ? 'Hide Config' : 'Show Config';
+            DOM.toggleConfigBtn.textContent = isHidden ? 'Show Config' : 'Hide Config';
         }
 
         function createBettingStrategyTable() {
@@ -759,7 +782,7 @@
                 }
             });
         }
-        
+
         function addDefaultPlayer(){
              const defaultPlayer = {
                 id: `player-${Date.now()}`, name: 'Default Player (Bets on 7+ Spread)', startMoney: 100, stopLoss: null,
@@ -774,14 +797,14 @@
             const isEditing = !!playerId;
             DOM.modalTitle.textContent = isEditing ? 'Edit Player' : 'Add Player';
             DOM.playerId.value = isEditing ? playerId : `player-${Date.now()}`;
-            
+
             const player = isEditing ? players.find(p => p.id === playerId) : null;
             const rebuy = player?.rebuy || { strategy: 'cover_bet', count: Infinity, amount: 50 };
-            
+
             DOM.playerName.value = player?.name || '';
             DOM.startMoney.value = player?.startMoney || 100;
             DOM.stopLoss.value = player?.stopLoss || '';
-            
+
             DOM.rebuyStrategy.value = rebuy.strategy;
             DOM.buyInAmount.value = rebuy.amount;
             DOM.rebuyAmountContainer.classList.toggle('hidden', rebuy.strategy !== 'fixed_amount');
@@ -796,7 +819,7 @@
             DOM.cardCounting.value = player?.cardCounting || 'none';
             DOM.customRanks.value = player?.customRanks?.join(', ') || '';
             DOM.customRanksContainer.classList.toggle('hidden', (player?.cardCounting || 'none') !== 'custom');
-            
+
             const strategies = player?.bettingStrategy || Array(13).fill({ type: 'min', value: 1 });
             for(let i=0; i<=12; i++){
                 const row = DOM.bettingStrategyTable.rows[i];
@@ -838,7 +861,7 @@
                     value: parseFloat(DOM.bettingStrategyTable.querySelector(`input[data-spread="${i}"]`).value)
                 };
             }
-            
+
             if(isEditing) players = players.map(p => p.id === id ? player : p);
             else players.push(player);
             renderPlayerList();
@@ -859,7 +882,7 @@
                 DOM.playerList.appendChild(playerDiv);
             });
         }
-        
+
         // --- SIMULATION HANDLING ---
 
         function initWorker() {
@@ -873,10 +896,10 @@
         function handleWorkerMessage(e) {
             const { type, data } = e.data;
             switch(type) {
-                case 'ready': 
-                    theoreticalStats = data.theoreticalStats; 
+                case 'ready':
+                    theoreticalStats = data.theoreticalStats;
                     break;
-                case 'tick': 
+                case 'tick':
                     currentLiveGamePotHistory.push(data.latestPot);
                     Object.keys(data.playerPots).forEach(pId => {
                         if (!currentLivePlayerPotHistory[pId]) currentLivePlayerPotHistory[pId] = [];
@@ -886,20 +909,20 @@
 
                     const { latestPot, playerPots, playerBets, ...rest } = data;
                     currentLiveGameData = rest;
-                    redrawAllCharts(); 
+                    redrawAllCharts();
                     break;
                 case 'gameComplete':
                     allCompletedGamesData.push(data.finalStats);
-                    currentLiveGameData = null; 
+                    currentLiveGameData = null;
                     currentLiveGamePotHistory = [];
                     currentLivePlayerPotHistory = {};
                     currentLivePlayerBets = {};
                     simulationTimings.push(data.finalStats.duration);
                     updateProgress(data);
-                    redrawAllCharts(); 
+                    redrawAllCharts();
                     break;
-                case 'complete': 
-                    finalizeSimulation(); 
+                case 'complete':
+                    finalizeSimulation();
                     break;
             }
         }
@@ -915,9 +938,14 @@
             DOM.stopSimBtn.disabled = false;
             DOM.resultsContainer.classList.remove('hidden');
             DOM.progressContainer.classList.remove('hidden');
-            
+
             allCompletedGamesData = []; currentLiveGameData = null; simulationTimings.length = 0; theoreticalStats = null; currentLiveGamePotHistory = []; currentLivePlayerPotHistory = {}; currentLivePlayerBets = {};
-            
+
+            const colorPalette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
+            playerColors = {};
+            players.forEach((p, i) => playerColors[p.id] = colorPalette[i % colorPalette.length]);
+
+
             const toCents = val => Math.round(val * 100);
             const gameConfig = { ante: toCents(parseFloat(DOM.anteAmount.value)), startingPot: toCents(parseFloat(DOM.startingPot.value)), minTotalBets: parseInt(DOM.minTotalBets.value), minPotClearValue: toCents(parseFloat(DOM.minPotClearValue.value)) };
             const playersConfig = JSON.parse(JSON.stringify(players, (k,v) => v === Infinity ? "Infinity" : v)).map(p => {
@@ -929,19 +957,29 @@
             });
 
             const config = { players: playersConfig, game: gameConfig, simulationCount: parseInt(DOM.simCountInput.value) };
-            
+
             initWorker();
             setupPlayerWinLossCharts();
             setupPlayerBetAmountCharts();
             simulationStartTime = performance.now();
-            updateProgress({progress: 0, gameNum: 0, totalGames: config.simulationCount});
+            updateProgress({progress: 0, gameNum: -1, totalGames: config.simulationCount});
             simulationTimer = setInterval(() => {
                 const elapsedSeconds = Math.round((performance.now() - simulationStartTime) / 1000);
                 DOM.elapsedTimeText.textContent = `Elapsed: ${elapsedSeconds}s`;
+                 if (simulationTimings.length > 0) {
+                    const avgTime = simulationTimings.reduce((a, b) => a + b, 0) / simulationTimings.length;
+                    const etaSeconds = Math.round(avgTime * (config.simulationCount - allCompletedGamesData.length));
+                    DOM.etaText.textContent = `ETA: ${etaSeconds}s`;
+                } else if (allCompletedGamesData.length > 0) {
+                    const elapsed = (performance.now() - simulationStartTime) / 1000;
+                    const timePerGame = elapsed / allCompletedGamesData.length;
+                    const etaSeconds = Math.round(timePerGame * (config.simulationCount - allCompletedGamesData.length));
+                     DOM.etaText.textContent = `ETA: ${etaSeconds}s`;
+                }
             }, 1000);
             simulationWorker.postMessage({ type: 'start', config });
         }
-        
+
         function stopSimulation() {
             if(simulationWorker) {
                 simulationWorker.terminate();
@@ -961,39 +999,26 @@
             DOM.elapsedTimeText.textContent = `Total Time: ${elapsedSeconds}s`;
             DOM.etaText.textContent = `ETA: 0s`;
         }
-        
+
         function updateProgress(data) {
             const { progress, gameNum, totalGames } = data;
             const percentage = Math.round(progress * 100);
             DOM.progressBar.style.width = `${percentage}%`;
             DOM.progressPercentage.textContent = `${percentage}%`;
             DOM.progressText.textContent = `Simulating game ${gameNum + 1} of ${totalGames}...`;
-            
-            if (simulationTimings.length > 0) {
-                const avgTime = simulationTimings.reduce((a, b) => a + b, 0) / simulationTimings.length;
-                const etaSeconds = Math.round(avgTime * (totalGames - (gameNum + 1)));
-                DOM.etaText.textContent = `ETA: ${etaSeconds}s`;
-            } else if (gameNum > 0) {
-                const elapsed = (performance.now() - simulationStartTime) / 1000;
-                const timePerGame = elapsed / (gameNum + 1);
-                const etaSeconds = Math.round(timePerGame * (totalGames - (gameNum + 1)));
-                 DOM.etaText.textContent = `ETA: ${etaSeconds}s`;
-            } else {
-                DOM.etaText.textContent = 'ETA: Calculating...';
-            }
         }
-        
+
         function redrawAllCharts() {
             if(!allCompletedGamesData.length && !currentLiveGameData) {
                  [...document.querySelectorAll('.h-96')].forEach(el => Plotly.purge(el.id));
                 return;
             }
-            
+
              plotHeatmap('game-length-heatmap', 'Game Length (# of Bets)', allCompletedGamesData.map(g => g.length), currentLiveGameData?.length);
              plotHeatmap('antes-made-heatmap', '# of Antes Made', allCompletedGamesData.map(g => g.antesMade), currentLiveGameData?.antesMade);
              plotHeatmap('shuffles-heatmap', '# of Shuffles per Game', allCompletedGamesData.map(g => g.shuffles), currentLiveGameData?.shuffles);
              plotHeatmap('game-time-heatmap', 'Game Simulation Time (s)', allCompletedGamesData.map(g => g.duration), null);
-            
+
              const anyGaveUp = allCompletedGamesData.some(g => g.playersGaveUp > 0) || (currentLiveGameData && currentLiveGameData.playersGaveUp > 0);
              DOM.gaveUpHeatmapContainer.classList.toggle('hidden', !anyGaveUp);
              if (anyGaveUp) {
@@ -1010,7 +1035,7 @@
 
         // --- PLOTTING ---
         const PLOTLY_LAYOUT_CONFIG = { paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { color: '#d1d5db' }, xaxis: { gridcolor: '#374151' }, yaxis: { gridcolor: '#374151' }, margin: { l: 60, r: 20, b: 50, t: 60 } };
-        
+
         function getHistogramData(data, numBins = 40) {
             if (!data || data.length < 1) return { centers: [], counts: [] };
             if (data.length < 2) return { centers: data, counts: data.map(() => 1) };
@@ -1042,27 +1067,26 @@
             const layout = { ...PLOTLY_LAYOUT_CONFIG, title, shapes, yaxis: { showticklabels: false }, xaxis: {...PLOTLY_LAYOUT_CONFIG.xaxis, tickprefix: tickPrefix} };
             Plotly.react(elementId, [trace], layout, {responsive: true});
         }
-        
+
         function plotPotSize(completedGames, liveGame) {
             const traces = completedGames.slice(-50).map(game => ({ y: game.potHistory.map(p => p/100), mode: 'lines', line: { width: 1, color: '#3b82f6' }, opacity: 0.3, hoverinfo: 'none' }));
             if(liveGame) traces.push({ y: currentLiveGamePotHistory.map(p => p/100), mode: 'lines', line: { width: 2.5, color: '#ef4444' }, name: `Game ${liveGame.gameNum}` });
             const layout = { ...PLOTLY_LAYOUT_CONFIG, title: 'Pot Size Over Time', showlegend: false, yaxis: {...PLOTLY_LAYOUT_CONFIG.yaxis, tickprefix: '$', tickformat: ',.2f' } };
             Plotly.react('pot-size-chart', traces, layout, {responsive: true});
         }
-        
+
         function plotPlayerPotChart(liveGame) {
             const traces = [];
-            
+
             allCompletedGamesData.slice(-20).forEach(game => {
                  players.forEach(player => {
                      if(game.playerPotHistory[player.id]) {
-                        traces.push({ 
-                            y: game.playerPotHistory[player.id].map(p => p/100), 
-                            mode: 'lines', 
-                            line: { width: 1, color: '#3b82f6' },
+                        traces.push({
+                            y: game.playerPotHistory[player.id].map(p => p/100),
+                            mode: 'lines',
+                            line: { width: 1, color: playerColors[player.id] },
                             opacity: 0.2,
                             hoverinfo: 'none',
-                            legendgroup: 'past'
                         });
                     }
                 });
@@ -1070,17 +1094,18 @@
 
             if (liveGame) {
                 players.forEach(player => {
-                     traces.push({ 
-                        y: (currentLivePlayerPotHistory[player.id] || []).map(p => p/100), 
-                        mode: 'lines', 
-                        name: player.name
+                     traces.push({
+                        y: (currentLivePlayerPotHistory[player.id] || []).map(p => p/100),
+                        mode: 'lines',
+                        name: player.name,
+                        line: { color: playerColors[player.id] }
                     });
                 });
             }
-            const layout = { ...PLOTLY_LAYOUT_CONFIG, title: 'Player Equity in Pot', showlegend: true, yaxis: {...PLOTLY_LAYOUT_CONFIG.yaxis, tickprefix: '$', tickformat: ',.2f' } };
+            const layout = { ...PLOTLY_LAYOUT_CONFIG, title: 'Player Contribution to Pot', showlegend: false, yaxis: {...PLOTLY_LAYOUT_CONFIG.yaxis, tickprefix: '$', tickformat: ',.2f' } };
             Plotly.react(DOM.playerPotChart, traces, layout, {responsive: true});
         }
-        
+
         function setupPlayerWinLossCharts() {
             DOM.playerWinLossContainer.innerHTML = '';
             players.forEach(player => {
@@ -1101,7 +1126,7 @@
                 plotHeatmap(`player-win-loss-${player.id}`, `${player.name}: Win/Loss ($)`, playerData, null, '$');
             });
         }
-        
+
         function setupPlayerBetAmountCharts() {
              DOM.playerBetAmountContainer.innerHTML = '';
             players.forEach(player => {
@@ -1130,7 +1155,7 @@
             const observed = { occurrences: Array(13).fill(0), wins: Array(13).fill(0), losses: Array(13).fill(0), dlosses: Array(13).fill(0), sumEVContextual: Array(13).fill(0), maxWins: Array(13).fill(0), sumCtxWin: Array(13).fill(0), sumCtxLoss: Array(13).fill(0), sumCtxDloss: Array(13).fill(0), sumCtxOccur: Array(13).fill(0) };
             let totalSpreads = 0;
             let totalHandsForContextual = 0;
-            
+
             allGames.forEach(game => {
                 totalHandsForContextual += game.totalHandsForContextual || 0;
                 (game.aggregatedContextualOccurrences || []).forEach((p, i) => observed.sumCtxOccur[i] += p);
@@ -1164,13 +1189,13 @@
                 const measuredLossPct = totalOutcomes > 0 ? (observed.losses[i] / totalOutcomes) * 100 : 0;
                 const measuredDlossPct = totalOutcomes > 0 ? (observed.dlosses[i] / totalOutcomes) * 100 : 0;
                 const measuredEV = (measuredWinPct/100 * 1) + (measuredLossPct/100 * -1) + (measuredDlossPct/100 * -2);
-                
+
                 const contextualOccur = totalHandsForContextual > 0 ? observed.sumCtxOccur[i] / totalHandsForContextual : 0;
                 const contextualWin = totalOutcomes > 0 ? observed.sumCtxWin[i] / totalOutcomes : 0;
                 const contextualLoss = totalOutcomes > 0 ? observed.sumCtxLoss[i] / totalOutcomes : 0;
                 const contextualDloss = totalOutcomes > 0 ? observed.sumCtxDloss[i] / totalOutcomes : 0;
                 const contextualEV = observed.occurrences[i] > 0 ? (observed.sumEVContextual[i] / observed.occurrences[i]) / 100 : 0;
-                
+
                 const theoretical = theoreticalStats;
 
                 const row = document.createElement('tr'); row.className = 'border-b border-gray-600';
@@ -1192,6 +1217,7 @@
                     <td class="px-2 py-2 text-center text-green-400">${theoretical.outcomes[i].win.toFixed(1)}%</td>
                     <td class="px-2 py-2 text-center text-yellow-400">${theoretical.outcomes[i].loss.toFixed(1)}%</td>
                     <td class="px-2 py-2 text-center text-red-400">${theoretical.outcomes[i].dloss.toFixed(1)}%</td>
+                    <td class="px-2 py-2 text-center">${formatEV(theoretical.ev[i])}</td>
                 `;
                 tbody.appendChild(row);
             }
