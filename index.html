@@ -124,6 +124,12 @@
                             <label for="min-pot-clear-value" class="block font-medium mb-1">Min Pot Size on Clear ($)</label>
                             <input type="number" id="min-pot-clear-value" value="2" min="0" step="0.01">
                         </div>
+                        <div class="pt-2">
+                             <label class="flex items-center">
+                                <input type="checkbox" id="show-live-deck" class="w-auto mr-2">
+                                Show Live Deck
+                            </label>
+                        </div>
                         <div class="flex gap-4 pt-4">
                              <button id="import-config-btn" class="btn btn-secondary flex-1">Import Config</button>
                              <button id="export-config-btn" class="btn btn-secondary flex-1">Export Config</button>
@@ -144,8 +150,8 @@
             <div id="results-panel" class="lg:col-span-2 flex flex-col gap-8">
                 <!-- Simulation Controls -->
                 <div class="card">
-                     <h2 class="text-2xl font-bold mb-4 border-b border-gray-600 pb-2">Simulation Controls</h2>
-                     <div class="flex flex-col md:flex-row gap-4 items-center">
+                     <h2 class="text-2xl font-bold mb-2 border-b border-gray-600 pb-2">Simulation Controls</h2>
+                     <div class="flex flex-col md:flex-row gap-2 items-center">
                         <div class="w-full md:w-auto flex-grow">
                              <label for="simulation-count" class="block font-medium mb-1">Number of Games to Simulate</label>
                              <input type="number" id="simulation-count" value="100" min="1" class="w-full">
@@ -160,7 +166,7 @@
                             <button id="toggle-config-btn" class="btn btn-secondary w-full">Show Config</button>
                         </div>
                      </div>
-                     <div id="progress-container" class="mt-4 hidden">
+                     <div id="progress-container" class="mt-2 hidden">
                         <div class="flex justify-between mb-1">
                             <span id="progress-text" class="text-base font-medium text-blue-400">Running...</span>
                             <span id="progress-percentage" class="text-sm font-medium text-blue-400">0%</span>
@@ -178,10 +184,13 @@
                 <div id="results-container" class="card hidden">
                      <h2 class="text-2xl font-bold mb-4 border-b border-gray-600 pb-2">Simulation Results</h2>
                      <div class="space-y-6">
-                        <details open>
+                        <details id="overall-stats-details" open>
                             <summary>Overall Game Statistics</summary>
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4">
-                                <div id="pot-size-chart" class="md:col-span-2 h-96"></div>
+                                <div class="md:col-span-2 flex">
+                                    <div id="live-deck-display" class="w-1/6 pr-4 overflow-y-auto text-xs hidden"></div>
+                                    <div id="pot-size-chart" class="flex-grow h-80"></div>
+                                </div>
                                 <div class="md:col-span-2 overflow-x-auto pt-4">
                                     <h3 class="text-xl font-bold mb-2 pl-2">Spread Analysis</h3>
                                     <table class="w-full text-sm text-left">
@@ -218,13 +227,21 @@
                                         </tbody>
                                     </table>
                                 </div>
-                                <div id="game-length-heatmap" class="h-96"></div>
-                                <div id="antes-made-heatmap" class="h-96"></div>
-                                <div id="shuffles-heatmap" class="h-96"></div>
-                                <div id="game-time-heatmap" class="h-96"></div>
+                                <div id="game-length-heatmap-container" class="h-96">
+                                    <div id="game-length-heatmap" class="h-96"></div>
+                                </div>
+                                <div id="antes-made-heatmap-container" class="h-96">
+                                    <div id="antes-made-heatmap" class="h-96"></div>
+                                </div>
+                                <div id="shuffles-heatmap-container" class="h-96">
+                                    <div id="shuffles-heatmap" class="h-96"></div>
+                                </div>
+                                <div id="game-time-heatmap-container" class="h-96">
+                                    <div id="game-time-heatmap" class="h-96"></div>
+                                </div>
                             </div>
                         </details>
-                        <details>
+                        <details id="player-stats-details">
                             <summary>Player Statistics</summary>
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4">
                                 <div id="gave-up-heatmap-container" class="h-96 hidden">
@@ -343,14 +360,20 @@
         class Deck {
             constructor() { this.cards = []; this.discardPile = []; this.createDeck(); this.shuffle(); }
             createDeck() { this.cards = []; for (const suit of SUITS) for (const rank in RANKS) this.cards.push({ rank: RANKS[rank], suit, name: `${rank}${suit}` }); }
-            shuffle() { for (let i = this.cards.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [this.cards[i], this.cards[j]] = [this.cards[j], this.cards[i]]; } }
+            shuffle() {
+                // Modern Fisher-Yates shuffle algorithm for thorough randomization.
+                for (let i = this.cards.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [this.cards[i], this.cards[j]] = [this.cards[j], this.cards[i]];
+                }
+            }
             draw(count = 1) { const d = this.cards.splice(-count); this.discardPile.push(...d); return d; }
             reset() { this.createDeck(); this.shuffle(); this.discardPile = []; }
         }
 
         // --- SIMULATION LOGIC ---
         function runSimulation(config) {
-            const { players: playerConfigs, game: gameConfig, simulationCount } = config;
+            const { players: playerConfigs, game: gameConfig, simulationCount, showLiveDeck } = config;
 
             const theoreticalStats = calculateTheoreticalStats();
             self.postMessage({ type: 'ready', data: { theoreticalStats } });
@@ -360,6 +383,9 @@
 
                 const startTime = performance.now();
                 const deck = new Deck();
+                if (showLiveDeck) {
+                    self.postMessage({ type: 'deckShuffled', data: { deck: [...deck.cards] } });
+                }
                 let pot = gameConfig.startingPot;
                 let players = JSON.parse(JSON.stringify(playerConfigs)).map(p => ({ ...p, money: p.startMoney, isActive: true, buyInUsed: 0, rebuyAmountUsed: 0}));
                 let playerContributions = players.reduce((acc, p) => ({ ...acc, [p.id]: 0 }), {});
@@ -394,17 +420,21 @@
                 }
 
                 function handleRebuyIfNeeded(player, amountNeeded) {
-                    if (player.money >= amountNeeded || !player.rebuy || player.rebuy.strategy === 'none' || player.buyInUsed >= player.rebuy.count) return;
+                    if (player.money >= amountNeeded || !player.rebuy || player.rebuy.strategy === 'none' || player.buyInUsed >= player.rebuy.count) {
+                        return;
+                    }
+
                     let rebuyAmount = 0;
-                    if (player.rebuy.strategy === 'cover_bet') {
-                         rebuyAmount = Math.max(0, amountNeeded - player.money);
-                    } else if (player.rebuy.strategy === 'fixed_amount') {
+                    if (player.rebuy.strategy === 'cover_bet' || player.rebuy.strategy === 'fixed_amount') {
                         rebuyAmount = player.rebuy.amount;
                     }
 
                     if (rebuyAmount > 0) {
-                        player.money += rebuyAmount; player.rebuyAmountUsed += rebuyAmount;
-                        if(player.rebuy.count !== Infinity) player.buyInUsed++;
+                        player.money += rebuyAmount;
+                        player.rebuyAmountUsed += rebuyAmount;
+                        if(player.rebuy.count !== Infinity) {
+                            player.buyInUsed++;
+                        }
                     }
                 }
 
@@ -425,7 +455,13 @@
                         continue;
                     }
 
-                    if (deck.cards.length < 3) { deck.reset(); currentGameStats.shuffles++; }
+                    if (deck.cards.length < 3) {
+                        deck.reset();
+                        currentGameStats.shuffles++;
+                        if (showLiveDeck) {
+                            self.postMessage({ type: 'deckShuffled', data: { deck: [...deck.cards] } });
+                        }
+                    }
 
                     const contextualOccurrences = calculateContextualOccurrence(deck.cards);
                     currentGameStats.totalHandsForContextual++;
@@ -509,7 +545,11 @@
                     if (players.every(p => !p.isActive)) gameRunning = false;
 
                     const { spreads, potHistory, playerPotHistory, ...restOfStats } = currentGameStats;
-                    self.postMessage({ type: 'tick', data: { ...restOfStats, latestPot: pot, spreads, playerPots: playerContributions, playerBets: currentGameStats.playerBets }});
+                    const tickData = { ...restOfStats, latestPot: pot, spreads, playerPots: playerContributions, playerBets: currentGameStats.playerBets };
+                    if (showLiveDeck) {
+                        tickData.deck = deck.cards;
+                    }
+                    self.postMessage({ type: 'tick', data: tickData });
                 }
 
                 if (self.shouldStop) break;
@@ -717,6 +757,8 @@
             startingPot: document.getElementById('starting-pot'),
             minTotalBets: document.getElementById('min-total-bets'),
             minPotClearValue: document.getElementById('min-pot-clear-value'),
+            showLiveDeck: document.getElementById('show-live-deck'),
+            liveDeckDisplay: document.getElementById('live-deck-display'),
             importConfigBtn: document.getElementById('import-config-btn'),
             exportConfigBtn: document.getElementById('export-config-btn'),
             importFileInput: document.getElementById('import-file-input'),
@@ -724,7 +766,21 @@
             playerWinLossContainer: document.getElementById('player-win-loss-container'),
             playerBetAmountContainer: document.getElementById('player-bet-amount-container'),
             gaveUpHeatmapContainer: document.getElementById('gave-up-heatmap-container'),
+            gameLengthHeatmapContainer: document.getElementById('game-length-heatmap-container'),
+            antesMadeHeatmapContainer: document.getElementById('antes-made-heatmap-container'),
+            shufflesHeatmapContainer: document.getElementById('shuffles-heatmap-container'),
+            gameTimeHeatmapContainer: document.getElementById('game-time-heatmap-container'),
+            playerStatsDetails: document.getElementById('player-stats-details'),
         };
+
+        const elementsToHideDuringSim = [
+            'game-length-heatmap-container',
+            'antes-made-heatmap-container',
+            'shuffles-heatmap-container',
+            'game-time-heatmap-container',
+            'player-stats-details'
+        ];
+
 
         function initialize() {
             setupEventListeners();
@@ -742,7 +798,7 @@
             });
             DOM.rebuyStrategy.addEventListener('change', (e) => {
                 const strategy = e.target.value;
-                DOM.rebuyAmountContainer.classList.toggle('hidden', strategy !== 'fixed_amount');
+                DOM.rebuyAmountContainer.classList.toggle('hidden', strategy === 'none');
                 DOM.buyInCount.closest('div').classList.toggle('hidden', strategy === 'none');
             });
             DOM.cardCounting.addEventListener('change', (e) => {
@@ -860,7 +916,7 @@
 
             DOM.rebuyStrategy.value = rebuy.strategy;
             DOM.buyInAmount.value = rebuy.amount;
-            DOM.rebuyAmountContainer.classList.toggle('hidden', rebuy.strategy !== 'fixed_amount');
+            DOM.rebuyAmountContainer.classList.toggle('hidden', rebuy.strategy === 'none');
             DOM.buyInCount.closest('div').classList.toggle('hidden', rebuy.strategy === 'none');
 
             if (rebuy.count === Infinity || rebuy.count === 'Infinity') {
@@ -952,6 +1008,9 @@
                 case 'ready':
                     theoreticalStats = data.theoreticalStats;
                     break;
+                case 'deckShuffled':
+                    renderInitialDeck(data.deck);
+                    break;
                 case 'tick':
                     currentLiveGamePotHistory.push(data.latestPot);
                     Object.keys(data.playerPots).forEach(pId => {
@@ -960,8 +1019,12 @@
                     });
                     currentLivePlayerBets = data.playerBets;
 
-                    const { latestPot, playerPots, playerBets, ...rest } = data;
+                    const { latestPot, playerPots, playerBets, deck, ...rest } = data;
                     currentLiveGameData = rest;
+
+                    if (deck) {
+                        renderLiveDeck(deck);
+                    }
                     redrawAllCharts();
                     break;
                 case 'gameComplete':
@@ -992,6 +1055,11 @@
             DOM.resultsContainer.classList.remove('hidden');
             DOM.progressContainer.classList.remove('hidden');
 
+            elementsToHideDuringSim.forEach(id => document.getElementById(id)?.classList.add('hidden'));
+
+            const showDeck = DOM.showLiveDeck.checked;
+            DOM.liveDeckDisplay.classList.toggle('hidden', !showDeck);
+
             allCompletedGamesData = []; currentLiveGameData = null; simulationTimings.length = 0; theoreticalStats = null; currentLiveGamePotHistory = []; currentLivePlayerPotHistory = {}; currentLivePlayerBets = {};
 
             const colorPalette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
@@ -1009,7 +1077,7 @@
                 return p;
             });
 
-            const config = { players: playersConfig, game: gameConfig, simulationCount: parseInt(DOM.simCountInput.value) };
+            const config = { players: playersConfig, game: gameConfig, simulationCount: parseInt(DOM.simCountInput.value), showLiveDeck: showDeck };
 
             initWorker();
             setupPlayerWinLossCharts();
@@ -1040,6 +1108,8 @@
                 DOM.stopSimBtn.disabled = true;
                 DOM.startSimBtn.disabled = false;
                 DOM.progressText.textContent = "Stopped by user.";
+                elementsToHideDuringSim.forEach(id => document.getElementById(id)?.classList.remove('hidden'));
+                 DOM.liveDeckDisplay.classList.add('hidden');
             }
         }
 
@@ -1051,6 +1121,8 @@
             const elapsedSeconds = Math.round((performance.now() - simulationStartTime) / 1000);
             DOM.elapsedTimeText.textContent = `Total Time: ${elapsedSeconds}s`;
             DOM.etaText.textContent = `ETA: 0s`;
+            elementsToHideDuringSim.forEach(id => document.getElementById(id)?.classList.remove('hidden'));
+            DOM.liveDeckDisplay.classList.add('hidden');
         }
 
         function updateProgress(data) {
@@ -1063,25 +1135,52 @@
 
         function redrawAllCharts() {
             if(!allCompletedGamesData.length && !currentLiveGameData) {
-                 [...document.querySelectorAll('.h-96')].forEach(el => Plotly.purge(el.id));
+                 [...document.querySelectorAll('.h-96, .h-80')].forEach(el => Plotly.purge(el.id));
                 return;
             }
 
-             plotHeatmap('game-length-heatmap', 'Game Length (# of Bets)', allCompletedGamesData.map(g => g.length), currentLiveGameData?.length);
-             plotHeatmap('antes-made-heatmap', '# of Antes Made', allCompletedGamesData.map(g => g.antesMade), currentLiveGameData?.antesMade);
-             plotHeatmap('shuffles-heatmap', '# of Shuffles per Game', allCompletedGamesData.map(g => g.shuffles), currentLiveGameData?.shuffles);
-             plotHeatmap('game-time-heatmap', 'Game Simulation Time (s)', allCompletedGamesData.map(g => g.duration), null);
+            const isSimulating = DOM.stopSimBtn.disabled === false;
 
-             const anyGaveUp = allCompletedGamesData.some(g => g.playersGaveUp > 0) || (currentLiveGameData && currentLiveGameData.playersGaveUp > 0);
-             DOM.gaveUpHeatmapContainer.classList.toggle('hidden', !anyGaveUp);
-             if (anyGaveUp) {
-                plotHeatmap('gave-up-heatmap', '# of Players Who Gave Up', allCompletedGamesData.map(g => g.playersGaveUp), currentLiveGameData?.playersGaveUp);
-             }
+            plotPotHistoryChart(allCompletedGamesData, currentLiveGameData);
+            if(theoreticalStats) updateSpreadAnalysisTable();
 
-             plotPotHistoryChart(allCompletedGamesData, currentLiveGameData);
-             plotPlayerWinLossCharts();
-             plotPlayerBetAmountCharts();
-             if(theoreticalStats) updateSpreadAnalysisTable();
+            if (!isSimulating) {
+                plotHeatmap('game-length-heatmap', 'Game Length (# of Bets)', allCompletedGamesData.map(g => g.length), currentLiveGameData?.length);
+                plotHeatmap('antes-made-heatmap', '# of Antes Made', allCompletedGamesData.map(g => g.antesMade), currentLiveGameData?.antesMade);
+                plotHeatmap('shuffles-heatmap', '# of Shuffles per Game', allCompletedGamesData.map(g => g.shuffles), currentLiveGameData?.shuffles);
+                plotHeatmap('game-time-heatmap', 'Game Simulation Time (s)', allCompletedGamesData.map(g => g.duration), null);
+
+                const anyGaveUp = allCompletedGamesData.some(g => g.playersGaveUp > 0) || (currentLiveGameData && currentLiveGameData.playersGaveUp > 0);
+                DOM.gaveUpHeatmapContainer.classList.toggle('hidden', !anyGaveUp);
+                if (anyGaveUp) {
+                    plotHeatmap('gave-up-heatmap', '# of Players Who Gave Up', allCompletedGamesData.map(g => g.playersGaveUp), currentLiveGameData?.playersGaveUp);
+                }
+
+                plotPlayerWinLossCharts();
+                plotPlayerBetAmountCharts();
+            }
+        }
+
+        function formatCard(card) {
+            const suitSymbols = { H: '♥', D: '♦', C: '♣', S: '♠' };
+            const rankSymbols = { 2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9', 10: 'T', 11: 'J', 12: 'Q', 13: 'K', 14: 'A' };
+            const color = (card.suit === 'H' || card.suit === 'D') ? 'text-red-400' : 'text-gray-300';
+            return `<span class="${color} font-mono">${rankSymbols[card.rank]}${suitSymbols[card.suit]}</span>`;
+        }
+
+        function renderInitialDeck(deck) {
+            let html = '<div class="mb-2"><b>Initial Deck:</b><div class="flex flex-wrap gap-1">';
+            html += deck.map(formatCard).join(' ');
+            html += '</div></div>';
+            DOM.liveDeckDisplay.innerHTML = html;
+        }
+
+        function renderLiveDeck(deck) {
+            let html = DOM.liveDeckDisplay.querySelector('.mb-2')?.outerHTML || ''; // Keep initial deck if present
+            html += '<div><b>Remaining Cards:</b><div class="flex flex-wrap gap-1">';
+            html += deck.map(formatCard).join(' ');
+            html += '</div></div>';
+            DOM.liveDeckDisplay.innerHTML = html;
         }
 
 
