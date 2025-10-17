@@ -397,12 +397,10 @@
                 case 'resume':
                     isPaused = false;
                     self.postMessage({ type: 'resumed' });
-                    // Unblock the gameLoop by resolving any pending step
+                    // Unblock the gameLoop by resolving the current pending step
                     if (turnQueue.length > 0) {
                         const resolver = turnQueue.shift();
                         resolver();
-                    } else {
-                        gameLoop();
                     }
                     break;
                 case 'nextTurn':
@@ -418,29 +416,14 @@
             }
         };
 
-        function gameStep(action) {
+        function gameStep() {
             return new Promise(resolve => {
-                const execute = () => {
-                    action();
-                    resolve();
-                };
-
-                if (!isPaused) {
-                    // In autoplay mode, yield to the event loop with a timeout(0)
-                    // This allows messages like 'stop' to be processed.
-                    setTimeout(() => {
-                        if (!isPaused) { // Re-check in case stop was pressed during the timeout
-                             execute();
-                        } else {
-                           // If paused during the timeout, re-queue the step and wait for user action.
-                           turnQueue.push(execute);
-                           self.postMessage({ type: 'readyForNextTurn' });
-                        }
-                    }, 0);
-                } else {
-                    // In paused mode, queue the action and wait for 'nextTurn' or 'resume'.
-                    turnQueue.push(execute);
+                if (isPaused) {
+                    turnQueue.push(resolve);
                     self.postMessage({ type: 'readyForNextTurn' });
+                } else {
+                    // Yield to the event loop to allow other messages (like 'stop') to be processed.
+                    setTimeout(resolve, 0);
                 }
             });
         }
@@ -467,7 +450,12 @@
                     self.postMessage({ type: 'deckShuffled', data: { deck: [...deck.cards] } });
                 }
                 let pot = simulationState.config.game.startingPot;
-                let players = JSON.parse(JSON.stringify(simulationState.config.players)).map(p => ({ ...p, money: p.startMoney, isActive: true, buyInUsed: 0, rebuyAmountUsed: 0}));
+
+                // Correctly deep-copy players for the new game, preserving Infinity
+                let playersAsJson = JSON.stringify(simulationState.config.players, (k,v) => v === Infinity ? "Infinity" : v);
+                let playersConfigForGame = JSON.parse(playersAsJson, (k, v) => v === "Infinity" ? Infinity : v);
+                let players = playersConfigForGame.map(p => ({ ...p, money: p.startMoney, isActive: true, buyInUsed: 0, rebuyAmountUsed: 0}));
+
                 let playerContributions = players.reduce((acc, p) => ({ ...acc, [p.id]: 0 }), {});
 
                 let currentGameStats = {
@@ -529,13 +517,6 @@
 
                 while (gameRunning) {
 
-                    if (isPaused) {
-                        // The gameStep function will handle pausing by returning a promise that only resolves
-                        // when 'resume' or 'nextTurn' is called. This effectively stops the loop here.
-                        await gameStep(() => {});
-                        if(isPaused) continue; // If we're still paused (i.e., 'nextTurn' was used), loop again to wait.
-                    }
-
                     currentPlayerIndex = (currentPlayerIndex + 1) % players.length;
                     let currentPlayer = players[currentPlayerIndex];
 
@@ -567,36 +548,35 @@
 
                     let turnDetails = null;
 
-                    await gameStep(() => {
-                        // This part happens right before the bet result is known
-                        turnDetails = {
-                            playerName: currentPlayer.name,
-                            card1, card2, spread, betAmount,
-                            card3: null, outcome: 'pending',
-                            log: gameLogForTurn,
-                            playerMoneyBefore: currentPlayer.money
-                        };
-                         const { spreads, potHistory, playerPotHistory, ...restOfStats } = currentGameStats;
-                         const tickData = { ...restOfStats, latestPot: pot, spreads, playerPots: playerContributions, playerBets: currentGameStats.playerBets };
-                        if (simulationState.config.showLiveDeck) tickData.deck = deck.cards;
-                        if (simulationState.config.showLiveTurn) tickData.turnDetails = turnDetails;
-                        self.postMessage({ type: 'tick', data: tickData });
-                        gameLogForTurn = []; // Reset log for next turn
-                    });
+                    await gameStep();
+                    // This part happens right before the bet result is known
+                    turnDetails = {
+                        playerName: currentPlayer.name,
+                        card1, card2, spread, betAmount,
+                        card3: null, outcome: 'pending',
+                        log: gameLogForTurn,
+                        playerMoneyBefore: currentPlayer.money
+                    };
+                    const { spreads, potHistory, playerPotHistory, ...restOfStats } = currentGameStats;
+                    const tickData = { ...restOfStats, latestPot: pot, spreads, playerPots: playerContributions, playerBets: currentGameStats.playerBets };
+                    if (simulationState.config.showLiveDeck) tickData.deck = deck.cards;
+                    if (simulationState.config.showLiveTurn) tickData.turnDetails = turnDetails;
+                    self.postMessage({ type: 'tick', data: tickData });
+                    gameLogForTurn = []; // Reset log for next turn
 
-                    await gameStep(() => {
-                        // This part happens right after the bet result is known
-                        if (betAmount > 0) {
-                            consecutiveZeroBets = 0;
-                        } else {
-                            consecutiveZeroBets++;
-                        }
+                    await gameStep();
+                    // This part happens right after the bet result is known
+                    if (betAmount > 0) {
+                        consecutiveZeroBets = 0;
+                    } else {
+                        consecutiveZeroBets++;
+                    }
 
-                        if (consecutiveZeroBets > players.length * 5) { // Game stall detection
-                            gameRunning = false;
-                            return;
-                        }
+                    if (consecutiveZeroBets > players.length * 5) { // Game stall detection
+                        gameRunning = false;
+                    }
 
+                    if(gameRunning) {
                         currentGameStats.length++;
 
                         handleRebuyIfNeeded(currentPlayer, betAmount, gameLogForTurn);
@@ -656,8 +636,8 @@
                         players.forEach(p => currentGameStats.playerPotHistory[p.id].push(playerContributions[p.id]));
 
                         if (currentPlayer.stopLoss !== null && (currentPlayer.startMoney + currentPlayer.rebuyAmountUsed - currentPlayer.money) > currentPlayer.stopLoss && currentPlayer.isActive) {
-                           gameLogForTurn.push({type: 'stoploss', playerName: currentPlayer.name, threshold: currentPlayer.stopLoss});
-                           currentGameStats.playersGaveUp++; currentPlayer.isActive = false;
+                            gameLogForTurn.push({type: 'stoploss', playerName: currentPlayer.name, threshold: currentPlayer.stopLoss});
+                            currentGameStats.playersGaveUp++; currentPlayer.isActive = false;
                         }
 
 
@@ -672,12 +652,12 @@
 
                         if (players.every(p => !p.isActive)) gameRunning = false;
 
-                        const { spreads, potHistory, playerPotHistory, ...restOfStats } = currentGameStats;
-                        const tickData = { ...restOfStats, latestPot: pot, spreads, playerPots: playerContributions, playerBets: currentGameStats.playerBets };
-                        if (simulationState.config.showLiveDeck) tickData.deck = deck.cards;
-                        if (simulationState.config.showLiveTurn) tickData.turnDetails = turnDetails;
-                        self.postMessage({ type: 'tick', data: tickData });
-                    });
+                        const { spreads: finalSpreads, potHistory: finalPotHistory, playerPotHistory: finalPlayerPotHistory, ...finalRestOfStats } = currentGameStats;
+                        const finalTickData = { ...finalRestOfStats, latestPot: pot, spreads: finalSpreads, playerPots: playerContributions, playerBets: currentGameStats.playerBets };
+                        if (simulationState.config.showLiveDeck) finalTickData.deck = deck.cards;
+                        if (simulationState.config.showLiveTurn) finalTickData.turnDetails = turnDetails;
+                        self.postMessage({ type: 'tick', data: finalTickData });
+                    }
                 }
 
                 currentGameStats.duration = (performance.now() - startTime) / 1000;
