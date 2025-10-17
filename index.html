@@ -129,6 +129,10 @@
                                 <input type="checkbox" id="show-live-deck" class="w-auto mr-2">
                                 Show Live Deck
                             </label>
+                             <label class="flex items-center mt-1">
+                                <input type="checkbox" id="show-live-turn" class="w-auto mr-2">
+                                Show Live Turn Details
+                            </label>
                         </div>
                         <div class="flex gap-4 pt-4">
                              <button id="import-config-btn" class="btn btn-secondary flex-1">Import Config</button>
@@ -188,7 +192,8 @@
                             <summary>Overall Game Statistics</summary>
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4">
                                 <div class="md:col-span-2 flex">
-                                    <div id="live-deck-display" class="w-1/6 pr-4 overflow-y-auto text-xs hidden"></div>
+                                    <div id="live-deck-display" class="w-1/5 pr-4 overflow-y-auto text-xs hidden"></div>
+                                    <div id="live-turn-display" class="w-1/5 pr-4 text-xs hidden"></div>
                                     <div id="pot-size-chart" class="flex-grow h-80"></div>
                                 </div>
                                 <div class="md:col-span-2 overflow-x-auto pt-4">
@@ -373,7 +378,7 @@
 
         // --- SIMULATION LOGIC ---
         function runSimulation(config) {
-            const { players: playerConfigs, game: gameConfig, simulationCount, showLiveDeck } = config;
+            const { players: playerConfigs, game: gameConfig, simulationCount, showLiveDeck, showLiveTurn } = config;
 
             const theoreticalStats = calculateTheoreticalStats();
             self.postMessage({ type: 'ready', data: { theoreticalStats } });
@@ -420,19 +425,18 @@
                 }
 
                 function handleRebuyIfNeeded(player, amountNeeded) {
-                    if (player.money >= amountNeeded || !player.rebuy || player.rebuy.strategy === 'none' || player.buyInUsed >= player.rebuy.count) {
-                        return;
-                    }
+                     while (player.money < amountNeeded) {
+                        if (!player.rebuy || player.rebuy.strategy === 'none' || (player.rebuy.count !== Infinity && player.buyInUsed >= player.rebuy.count)) {
+                            break;
+                        }
 
-                    let rebuyAmount = 0;
-                    if (player.rebuy.strategy === 'cover_bet' || player.rebuy.strategy === 'fixed_amount') {
-                        rebuyAmount = player.rebuy.amount;
-                    }
+                        let rebuyAmount = player.rebuy.strategy === 'cover_bet' ? amountNeeded - player.money : player.rebuy.amount;
 
-                    if (rebuyAmount > 0) {
+                        if (rebuyAmount <= 0) break; // Should not happen with cover_bet, but a safeguard.
+
                         player.money += rebuyAmount;
                         player.rebuyAmountUsed += rebuyAmount;
-                        if(player.rebuy.count !== Infinity) {
+                        if (player.rebuy.count !== Infinity) {
                             player.buyInUsed++;
                         }
                     }
@@ -474,7 +478,7 @@
                     const userSpread = spread + 1;
 
                     const betDecision = getPlayerBet(currentPlayer, spread, pot, gameConfig.ante, deck);
-                    const betAmount = betDecision.bet;
+                    const betAmount = Math.max(betDecision.bet, gameConfig.ante);
 
                     if (betAmount > 0) {
                         consecutiveZeroBets = 0;
@@ -491,6 +495,8 @@
 
                     handleRebuyIfNeeded(currentPlayer, betAmount);
 
+                    let turnDetails = null;
+
                     if (betAmount > 0 && currentPlayer.money >= betAmount) {
                         currentGameStats.playerBets[currentPlayer.id].push(betAmount);
                         currentPlayer.money -= betAmount;
@@ -505,13 +511,22 @@
                             playerContributions[currentPlayer.id] += betAmount * 2;
                         }
                         else if (card3.rank > lowRank && card3.rank < highRank) {
-                            outcome = 'win'; const winnings = betAmount; pot -= winnings; currentPlayer.money += betAmount + winnings;
+                            outcome = 'win';
+                            const winnings = betAmount;
+                            pot -= winnings;
+                            currentPlayer.money += betAmount + winnings;
+                            playerContributions[currentPlayer.id] -= winnings;
+
                             if (!currentGameStats.spreads[userSpread]) currentGameStats.spreads[userSpread] = {};
                             currentGameStats.spreads[userSpread].maxWin = Math.max(currentGameStats.spreads[userSpread].maxWin || 0, winnings / gameConfig.ante);
                         } else {
                             outcome = 'loss';
                             pot += betAmount;
                             playerContributions[currentPlayer.id] += betAmount;
+                        }
+
+                        if (showLiveTurn) {
+                            turnDetails = { playerName: currentPlayer.name, card1, card2, spread, betAmount, card3, outcome };
                         }
 
                         if (!currentGameStats.spreads[userSpread]) currentGameStats.spreads[userSpread] = { occurrences: 0, wins: 0, losses: 0, dlosses: 0, sumEVContextual: 0, sumCtxWin:0, sumCtxLoss:0, sumCtxDloss:0 };
@@ -524,7 +539,20 @@
 
                         const ev_contextual = calculateEVsForBet(betAmount, spread, deck, deck.cards).observed;
                         s.sumEVContextual += ev_contextual;
+                    } else {
+                        if (betAmount > 0) { // Player was supposed to bet but couldn't cover it
+                            currentPlayer.isActive = false;
+                            currentGameStats.playersGaveUp++;
+                            if (showLiveTurn) {
+                                turnDetails = { playerName: currentPlayer.name, card1, card2, spread, betAmount, card3: null, outcome: 'quit' };
+                            }
+                        } else { // A bet of 0 is a legal pass
+                             if (showLiveTurn) {
+                                turnDetails = { playerName: currentPlayer.name, card1, card2, spread, betAmount: 0, card3: null, outcome: 'pass' };
+                            }
+                        }
                     }
+
 
                     currentGameStats.potHistory.push(pot);
                     players.forEach(p => currentGameStats.playerPotHistory[p.id].push(playerContributions[p.id]));
@@ -548,6 +576,9 @@
                     const tickData = { ...restOfStats, latestPot: pot, spreads, playerPots: playerContributions, playerBets: currentGameStats.playerBets };
                     if (showLiveDeck) {
                         tickData.deck = deck.cards;
+                    }
+                    if (showLiveTurn) {
+                        tickData.turnDetails = turnDetails;
                     }
                     self.postMessage({ type: 'tick', data: tickData });
                 }
@@ -758,7 +789,9 @@
             minTotalBets: document.getElementById('min-total-bets'),
             minPotClearValue: document.getElementById('min-pot-clear-value'),
             showLiveDeck: document.getElementById('show-live-deck'),
+            showLiveTurn: document.getElementById('show-live-turn'),
             liveDeckDisplay: document.getElementById('live-deck-display'),
+            liveTurnDisplay: document.getElementById('live-turn-display'),
             importConfigBtn: document.getElementById('import-config-btn'),
             exportConfigBtn: document.getElementById('export-config-btn'),
             importFileInput: document.getElementById('import-file-input'),
@@ -1019,11 +1052,14 @@
                     });
                     currentLivePlayerBets = data.playerBets;
 
-                    const { latestPot, playerPots, playerBets, deck, ...rest } = data;
+                    const { latestPot, playerPots, playerBets, deck, turnDetails, ...rest } = data;
                     currentLiveGameData = rest;
 
                     if (deck) {
                         renderLiveDeck(deck);
+                    }
+                    if (turnDetails) {
+                        renderLiveTurn(turnDetails);
                     }
                     redrawAllCharts();
                     break;
@@ -1059,6 +1095,8 @@
 
             const showDeck = DOM.showLiveDeck.checked;
             DOM.liveDeckDisplay.classList.toggle('hidden', !showDeck);
+            const showTurn = DOM.showLiveTurn.checked;
+            DOM.liveTurnDisplay.classList.toggle('hidden', !showTurn);
 
             allCompletedGamesData = []; currentLiveGameData = null; simulationTimings.length = 0; theoreticalStats = null; currentLiveGamePotHistory = []; currentLivePlayerPotHistory = {}; currentLivePlayerBets = {};
 
@@ -1077,7 +1115,7 @@
                 return p;
             });
 
-            const config = { players: playersConfig, game: gameConfig, simulationCount: parseInt(DOM.simCountInput.value), showLiveDeck: showDeck };
+            const config = { players: playersConfig, game: gameConfig, simulationCount: parseInt(DOM.simCountInput.value), showLiveDeck: showDeck, showLiveTurn: showTurn };
 
             initWorker();
             setupPlayerWinLossCharts();
@@ -1110,6 +1148,7 @@
                 DOM.progressText.textContent = "Stopped by user.";
                 elementsToHideDuringSim.forEach(id => document.getElementById(id)?.classList.remove('hidden'));
                  DOM.liveDeckDisplay.classList.add('hidden');
+                 DOM.liveTurnDisplay.classList.add('hidden');
             }
         }
 
@@ -1123,6 +1162,7 @@
             DOM.etaText.textContent = `ETA: 0s`;
             elementsToHideDuringSim.forEach(id => document.getElementById(id)?.classList.remove('hidden'));
             DOM.liveDeckDisplay.classList.add('hidden');
+            DOM.liveTurnDisplay.classList.add('hidden');
         }
 
         function updateProgress(data) {
@@ -1162,6 +1202,7 @@
         }
 
         function formatCard(card) {
+            if (!card) return '';
             const suitSymbols = { H: '♥', D: '♦', C: '♣', S: '♠' };
             const rankSymbols = { 2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9', 10: 'T', 11: 'J', 12: 'Q', 13: 'K', 14: 'A' };
             const color = (card.suit === 'H' || card.suit === 'D') ? 'text-red-400' : 'text-gray-300';
@@ -1181,6 +1222,32 @@
             html += deck.map(formatCard).join(' ');
             html += '</div></div>';
             DOM.liveDeckDisplay.innerHTML = html;
+        }
+
+        function renderLiveTurn(turnData) {
+            const { playerName, card1, card2, spread, betAmount, card3, outcome } = turnData;
+            let html = `<div><b>Last Turn (${playerName}):</b></div>`;
+
+            html += `<div>Offered: ${formatCard(card1)} ${formatCard(card2)} (Sprd: ${spread})</div>`;
+
+            if (outcome === 'quit') {
+                html += `<div class="text-red-500 font-bold">QUIT (can't cover bet of $${(betAmount / 100).toFixed(2)})</div>`;
+            } else if (betAmount > 0) {
+                html += `<div>Bet: $${(betAmount / 100).toFixed(2)}</div>`;
+                let outcomeText = '';
+                let outcomeColor = '';
+                switch(outcome) {
+                    case 'win': outcomeText = 'WIN'; outcomeColor = 'text-green-400'; break;
+                    case 'loss': outcomeText = 'LOSS'; outcomeColor = 'text-yellow-400'; break;
+                    case 'dloss': outcomeText = 'D-LOSS'; outcomeColor = 'text-red-400'; break;
+                }
+                html += `<div>Result: ${formatCard(card3)} <b class="${outcomeColor}">${outcomeText}</b></div>`;
+
+            } else {
+                html += `<div>Bet: $0.00 (Pass)</div>`;
+            }
+
+            DOM.liveTurnDisplay.innerHTML = html;
         }
 
 
