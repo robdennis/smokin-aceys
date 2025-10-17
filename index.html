@@ -130,7 +130,7 @@
                                 Show Live Deck
                             </label>
                              <label class="flex items-center mt-1">
-                                <input type="checkbox" id="show-live-turn" class="w-auto mr-2">
+                                <input type="checkbox" id="show-live-turn" class="w-auto mr-2" checked>
                                 Show Live Turn Details
                             </label>
                         </div>
@@ -164,8 +164,11 @@
                             <button id="start-simulation-btn" class="btn btn-primary w-full">Start Simulation</button>
                         </div>
                         <div class="w-full md:w-auto pt-0 md:pt-7">
-                             <button id="stop-simulation-btn" class="btn btn-danger w-full" disabled>Stop Simulation</button>
+                             <button id="stop-simulation-btn" class="btn btn-danger w-full hidden">Stop Simulation</button>
                         </div>
+                         <div id="next-turn-btn-container" class="w-full md:w-auto pt-0 md:pt-7 hidden">
+                             <button id="next-turn-btn" class="btn btn-secondary w-full">Next Turn</button>
+                         </div>
                         <div id="toggle-config-btn-container" class="w-full md:w-auto pt-0 md:pt-7 hidden">
                             <button id="toggle-config-btn" class="btn btn-secondary w-full">Show Config</button>
                         </div>
@@ -193,7 +196,7 @@
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4">
                                 <div class="md:col-span-2 flex">
                                     <div id="live-deck-display" class="w-1/5 pr-4 overflow-y-auto text-xs hidden"></div>
-                                    <div id="live-turn-display" class="w-1/5 pr-4 text-xs hidden"></div>
+                                    <div id="live-turn-display" class="flex-grow pr-4 text-xs hidden h-80 overflow-y-auto bg-gray-800 p-2 rounded-md"></div>
                                     <div id="pot-size-chart" class="flex-grow h-80"></div>
                                 </div>
                                 <div class="md:col-span-2 overflow-x-auto pt-4">
@@ -357,7 +360,6 @@
 
     <!-- This script tag contains the simulation logic that will be run in a Web Worker -->
     <script id="simulator-worker" type="javascript/worker">
-
         // --- CORE GAME LOGIC ---
         const SUITS = ['H', 'D', 'C', 'S'];
         const RANKS = { '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10, 'J': 11, 'Q': 12, 'K': 13, 'A': 14 };
@@ -366,7 +368,6 @@
             constructor() { this.cards = []; this.discardPile = []; this.createDeck(); this.shuffle(); }
             createDeck() { this.cards = []; for (const suit of SUITS) for (const rank in RANKS) this.cards.push({ rank: RANKS[rank], suit, name: `${rank}${suit}` }); }
             shuffle() {
-                // Modern Fisher-Yates shuffle algorithm for thorough randomization.
                 for (let i = this.cards.length - 1; i > 0; i--) {
                     const j = Math.floor(Math.random() * (i + 1));
                     [this.cards[i], this.cards[j]] = [this.cards[j], this.cards[i]];
@@ -377,22 +378,96 @@
         }
 
         // --- SIMULATION LOGIC ---
+        let simulationState = {};
+        let isPaused = false;
+        let turnQueue = [];
+
+        self.onmessage = function(e) {
+            const { type, config } = e.data;
+            switch (type) {
+                case 'start':
+                    isPaused = false;
+                    turnQueue = [];
+                    runSimulation(config);
+                    break;
+                case 'stop': // This now means pause
+                    isPaused = true;
+                    self.postMessage({ type: 'paused' });
+                    break;
+                case 'resume':
+                    isPaused = false;
+                    self.postMessage({ type: 'resumed' });
+                    // Unblock the gameLoop by resolving any pending step
+                    if (turnQueue.length > 0) {
+                        const resolver = turnQueue.shift();
+                        resolver();
+                    } else {
+                        gameLoop();
+                    }
+                    break;
+                case 'nextTurn':
+                    if (turnQueue.length > 0) {
+                        const resolver = turnQueue.shift();
+                        resolver(); // This will resolve the promise inside gameStep
+                    }
+                    break;
+                 case 'terminate':
+                    isPaused = true; // Effectively stops the simulation
+                    self.close();
+                    break;
+            }
+        };
+
+        function gameStep(action) {
+            return new Promise(resolve => {
+                const execute = () => {
+                    action();
+                    resolve();
+                };
+
+                if (!isPaused) {
+                    // In autoplay mode, yield to the event loop with a timeout(0)
+                    // This allows messages like 'stop' to be processed.
+                    setTimeout(() => {
+                        if (!isPaused) { // Re-check in case stop was pressed during the timeout
+                             execute();
+                        } else {
+                           // If paused during the timeout, re-queue the step and wait for user action.
+                           turnQueue.push(execute);
+                           self.postMessage({ type: 'readyForNextTurn' });
+                        }
+                    }, 0);
+                } else {
+                    // In paused mode, queue the action and wait for 'nextTurn' or 'resume'.
+                    turnQueue.push(execute);
+                    self.postMessage({ type: 'readyForNextTurn' });
+                }
+            });
+        }
+
         function runSimulation(config) {
             const { players: playerConfigs, game: gameConfig, simulationCount, showLiveDeck, showLiveTurn } = config;
+            simulationState.config = config;
+            simulationState.currentGameIndex = 0;
 
             const theoreticalStats = calculateTheoreticalStats();
             self.postMessage({ type: 'ready', data: { theoreticalStats } });
 
-            for (let i = 0; i < simulationCount; i++) {
-                if (self.shouldStop) break;
+            gameLoop();
+        }
+
+        async function gameLoop() {
+            for (let i = simulationState.currentGameIndex; i < simulationState.config.simulationCount; i++) {
+
+                simulationState.currentGameIndex = i;
 
                 const startTime = performance.now();
                 const deck = new Deck();
-                if (showLiveDeck) {
+                if (simulationState.config.showLiveDeck) {
                     self.postMessage({ type: 'deckShuffled', data: { deck: [...deck.cards] } });
                 }
-                let pot = gameConfig.startingPot;
-                let players = JSON.parse(JSON.stringify(playerConfigs)).map(p => ({ ...p, money: p.startMoney, isActive: true, buyInUsed: 0, rebuyAmountUsed: 0}));
+                let pot = simulationState.config.game.startingPot;
+                let players = JSON.parse(JSON.stringify(simulationState.config.players)).map(p => ({ ...p, money: p.startMoney, isActive: true, buyInUsed: 0, rebuyAmountUsed: 0}));
                 let playerContributions = players.reduce((acc, p) => ({ ...acc, [p.id]: 0 }), {});
 
                 let currentGameStats = {
@@ -407,15 +482,33 @@
                     currentGameStats.playerBets[p.id] = [];
                 });
 
-                function anteUp() {
+                function handleRebuyIfNeeded(player, amountNeeded, gameLog) {
+                     while (player.money < amountNeeded) {
+                        if (!player.rebuy || player.rebuy.strategy === 'none' || (player.rebuy.count !== Infinity && player.buyInUsed >= player.rebuy.count)) {
+                            break;
+                        }
+
+                        let rebuyAmount = player.rebuy.strategy === 'cover_bet' ? amountNeeded - player.money : player.rebuy.amount;
+                        if (rebuyAmount <= 0) break;
+
+                        player.money += rebuyAmount;
+                        player.rebuyAmountUsed += rebuyAmount;
+                        if (player.rebuy.count !== Infinity) {
+                            player.buyInUsed++;
+                        }
+                        gameLog.push({type: 'rebuy', playerName: player.name, amount: rebuyAmount, remaining: player.rebuy.count !== Infinity ? player.rebuy.count - player.buyInUsed : 'Unlimited'});
+                    }
+                }
+
+                function anteUp(gameLog) {
                     let activePlayers = players.filter(p => p.isActive);
                     if (activePlayers.length === 0) return false;
                     activePlayers.forEach(player => {
-                        handleRebuyIfNeeded(player, gameConfig.ante);
-                        if (player.money >= gameConfig.ante) {
-                            player.money -= gameConfig.ante;
-                            pot += gameConfig.ante;
-                            playerContributions[player.id] += gameConfig.ante;
+                        handleRebuyIfNeeded(player, simulationState.config.game.ante, gameLog);
+                        if (player.money >= simulationState.config.game.ante) {
+                            player.money -= simulationState.config.game.ante;
+                            pot += simulationState.config.game.ante;
+                            playerContributions[player.id] += simulationState.config.game.ante;
                         } else {
                             if(player.isActive) { player.isActive = false; currentGameStats.playersGaveUp++; }
                         }
@@ -424,32 +517,24 @@
                     return players.some(p => p.isActive);
                 }
 
-                function handleRebuyIfNeeded(player, amountNeeded) {
-                     while (player.money < amountNeeded) {
-                        if (!player.rebuy || player.rebuy.strategy === 'none' || (player.rebuy.count !== Infinity && player.buyInUsed >= player.rebuy.count)) {
-                            break;
-                        }
 
-                        let rebuyAmount = player.rebuy.strategy === 'cover_bet' ? amountNeeded - player.money : player.rebuy.amount;
-
-                        if (rebuyAmount <= 0) break; // Should not happen with cover_bet, but a safeguard.
-
-                        player.money += rebuyAmount;
-                        player.rebuyAmountUsed += rebuyAmount;
-                        if (player.rebuy.count !== Infinity) {
-                            player.buyInUsed++;
-                        }
-                    }
+                let gameLogForTurn = [];
+                if (!anteUp(gameLogForTurn)) {
+                    // end game if no one can ante
                 }
-
-                anteUp();
 
                 let currentPlayerIndex = -1;
                 let gameRunning = true;
                 let consecutiveZeroBets = 0;
 
                 while (gameRunning) {
-                    if (self.shouldStop) { gameRunning = false; break; }
+
+                    if (isPaused) {
+                        // The gameStep function will handle pausing by returning a promise that only resolves
+                        // when 'resume' or 'nextTurn' is called. This effectively stops the loop here.
+                        await gameStep(() => {});
+                        if(isPaused) continue; // If we're still paused (i.e., 'nextTurn' was used), loop again to wait.
+                    }
 
                     currentPlayerIndex = (currentPlayerIndex + 1) % players.length;
                     let currentPlayer = players[currentPlayerIndex];
@@ -462,7 +547,7 @@
                     if (deck.cards.length < 3) {
                         deck.reset();
                         currentGameStats.shuffles++;
-                        if (showLiveDeck) {
+                        if (simulationState.config.showLiveDeck) {
                             self.postMessage({ type: 'deckShuffled', data: { deck: [...deck.cards] } });
                         }
                     }
@@ -477,120 +562,130 @@
                     const spread = highRank - lowRank - 1;
                     const userSpread = spread + 1;
 
-                    const betDecision = getPlayerBet(currentPlayer, spread, pot, gameConfig.ante, deck);
-                    const betAmount = Math.max(betDecision.bet, gameConfig.ante);
-
-                    if (betAmount > 0) {
-                        consecutiveZeroBets = 0;
-                    } else {
-                        consecutiveZeroBets++;
-                    }
-
-                    if (consecutiveZeroBets > players.length * 5) { // Game stall detection
-                        gameRunning = false;
-                        continue;
-                    }
-
-                    currentGameStats.length++;
-
-                    handleRebuyIfNeeded(currentPlayer, betAmount);
+                    const betDecision = getPlayerBet(currentPlayer, spread, pot, simulationState.config.game.ante, deck);
+                    const betAmount = Math.max(betDecision.bet, simulationState.config.game.ante);
 
                     let turnDetails = null;
 
-                    if (betAmount > 0 && currentPlayer.money >= betAmount) {
-                        currentGameStats.playerBets[currentPlayer.id].push(betAmount);
-                        currentPlayer.money -= betAmount;
+                    await gameStep(() => {
+                        // This part happens right before the bet result is known
+                        turnDetails = {
+                            playerName: currentPlayer.name,
+                            card1, card2, spread, betAmount,
+                            card3: null, outcome: 'pending',
+                            log: gameLogForTurn,
+                            playerMoneyBefore: currentPlayer.money
+                        };
+                         const { spreads, potHistory, playerPotHistory, ...restOfStats } = currentGameStats;
+                         const tickData = { ...restOfStats, latestPot: pot, spreads, playerPots: playerContributions, playerBets: currentGameStats.playerBets };
+                        if (simulationState.config.showLiveDeck) tickData.deck = deck.cards;
+                        if (simulationState.config.showLiveTurn) tickData.turnDetails = turnDetails;
+                        self.postMessage({ type: 'tick', data: tickData });
+                        gameLogForTurn = []; // Reset log for next turn
+                    });
 
-                        const contextualOutcomes = calculateContextualOutcomes(deck);
-                        const [card3] = deck.draw(1);
-
-                        let outcome;
-                        if (card3.rank === highRank || card3.rank === lowRank) {
-                            outcome = 'dloss';
-                            pot += betAmount * 2;
-                            playerContributions[currentPlayer.id] += betAmount * 2;
-                        }
-                        else if (card3.rank > lowRank && card3.rank < highRank) {
-                            outcome = 'win';
-                            const winnings = betAmount;
-                            pot -= winnings;
-                            currentPlayer.money += betAmount + winnings;
-                            playerContributions[currentPlayer.id] -= winnings;
-
-                            if (!currentGameStats.spreads[userSpread]) currentGameStats.spreads[userSpread] = {};
-                            currentGameStats.spreads[userSpread].maxWin = Math.max(currentGameStats.spreads[userSpread].maxWin || 0, winnings / gameConfig.ante);
+                    await gameStep(() => {
+                        // This part happens right after the bet result is known
+                        if (betAmount > 0) {
+                            consecutiveZeroBets = 0;
                         } else {
-                            outcome = 'loss';
-                            pot += betAmount;
-                            playerContributions[currentPlayer.id] += betAmount;
+                            consecutiveZeroBets++;
                         }
 
-                        if (showLiveTurn) {
-                            turnDetails = { playerName: currentPlayer.name, card1, card2, spread, betAmount, card3, outcome };
+                        if (consecutiveZeroBets > players.length * 5) { // Game stall detection
+                            gameRunning = false;
+                            return;
                         }
 
-                        if (!currentGameStats.spreads[userSpread]) currentGameStats.spreads[userSpread] = { occurrences: 0, wins: 0, losses: 0, dlosses: 0, sumEVContextual: 0, sumCtxWin:0, sumCtxLoss:0, sumCtxDloss:0 };
-                        const s = currentGameStats.spreads[userSpread];
-                        s.occurrences++;
-                        s[outcome + 'es'] = (s[outcome + 'es'] || 0) + 1;
-                        s.sumCtxWin += contextualOutcomes.win;
-                        s.sumCtxLoss += contextualOutcomes.loss;
-                        s.sumCtxDloss += contextualOutcomes.dloss;
+                        currentGameStats.length++;
 
-                        const ev_contextual = calculateEVsForBet(betAmount, spread, deck, deck.cards).observed;
-                        s.sumEVContextual += ev_contextual;
-                    } else {
-                        if (betAmount > 0) { // Player was supposed to bet but couldn't cover it
-                            currentPlayer.isActive = false;
-                            currentGameStats.playersGaveUp++;
-                            if (showLiveTurn) {
-                                turnDetails = { playerName: currentPlayer.name, card1, card2, spread, betAmount, card3: null, outcome: 'quit' };
+                        handleRebuyIfNeeded(currentPlayer, betAmount, gameLogForTurn);
+
+                        if (betAmount > 0 && currentPlayer.money >= betAmount) {
+                            currentGameStats.playerBets[currentPlayer.id].push(betAmount);
+                            currentPlayer.money -= betAmount;
+
+                            const contextualOutcomes = calculateContextualOutcomes(deck);
+                            const [card3] = deck.draw(1);
+                            turnDetails.card3 = card3;
+
+                            let outcome;
+                            if (card3.rank === highRank || card3.rank === lowRank) {
+                                outcome = 'dloss';
+                                pot += betAmount * 2;
+                                playerContributions[currentPlayer.id] += betAmount * 2;
                             }
-                        } else { // A bet of 0 is a legal pass
-                             if (showLiveTurn) {
-                                turnDetails = { playerName: currentPlayer.name, card1, card2, spread, betAmount: 0, card3: null, outcome: 'pass' };
+                            else if (card3.rank > lowRank && card3.rank < highRank) {
+                                outcome = 'win';
+                                const winnings = betAmount;
+                                pot -= winnings;
+                                currentPlayer.money += betAmount + winnings;
+                                playerContributions[currentPlayer.id] -= winnings;
+
+                                if (!currentGameStats.spreads[userSpread]) currentGameStats.spreads[userSpread] = {};
+                                currentGameStats.spreads[userSpread].maxWin = Math.max(currentGameStats.spreads[userSpread].maxWin || 0, winnings / simulationState.config.game.ante);
+                            } else {
+                                outcome = 'loss';
+                                pot += betAmount;
+                                playerContributions[currentPlayer.id] += betAmount;
+                            }
+
+                            turnDetails.outcome = outcome;
+
+                            if (!currentGameStats.spreads[userSpread]) currentGameStats.spreads[userSpread] = { occurrences: 0, wins: 0, losses: 0, dlosses: 0, sumEVContextual: 0, sumCtxWin:0, sumCtxLoss:0, sumCtxDloss:0 };
+                            const s = currentGameStats.spreads[userSpread];
+                            s.occurrences++;
+                            s[outcome + 'es'] = (s[outcome + 'es'] || 0) + 1;
+                            s.sumCtxWin += contextualOutcomes.win;
+                            s.sumCtxLoss += contextualOutcomes.loss;
+                            s.sumCtxDloss += contextualOutcomes.dloss;
+
+                            const ev_contextual = calculateEVsForBet(betAmount, spread, deck, deck.cards).observed;
+                            s.sumEVContextual += ev_contextual;
+                        } else {
+                            if (betAmount > 0) { // Player was supposed to bet but couldn't cover it
+                                currentPlayer.isActive = false;
+                                currentGameStats.playersGaveUp++;
+                                turnDetails.outcome = 'quit';
+                            } else { // A bet of 0 is a legal pass
+                                turnDetails.outcome = 'pass';
                             }
                         }
-                    }
 
+                        currentGameStats.potHistory.push(pot);
+                        players.forEach(p => currentGameStats.playerPotHistory[p.id].push(playerContributions[p.id]));
 
-                    currentGameStats.potHistory.push(pot);
-                    players.forEach(p => currentGameStats.playerPotHistory[p.id].push(playerContributions[p.id]));
-
-                    if (currentPlayer.stopLoss !== null && currentPlayer.money < currentPlayer.stopLoss && currentPlayer.isActive) {
-                       currentGameStats.playersGaveUp++; currentPlayer.isActive = false;
-                    }
-
-                    if (pot <= 0) {
-                        if (currentGameStats.length >= gameConfig.minTotalBets || Math.abs(pot) >= gameConfig.minPotClearValue) gameRunning = false;
-                        else {
-                            if(!anteUp()) gameRunning = false;
-                            playerContributions = players.reduce((acc, p) => ({ ...acc, [p.id]: 0 }), {});
-                            players.forEach(p => currentGameStats.playerPotHistory[p.id] = []);
+                        if (currentPlayer.stopLoss !== null && (currentPlayer.startMoney + currentPlayer.rebuyAmountUsed - currentPlayer.money) > currentPlayer.stopLoss && currentPlayer.isActive) {
+                           gameLogForTurn.push({type: 'stoploss', playerName: currentPlayer.name, threshold: currentPlayer.stopLoss});
+                           currentGameStats.playersGaveUp++; currentPlayer.isActive = false;
                         }
-                    }
 
-                    if (players.every(p => !p.isActive)) gameRunning = false;
 
-                    const { spreads, potHistory, playerPotHistory, ...restOfStats } = currentGameStats;
-                    const tickData = { ...restOfStats, latestPot: pot, spreads, playerPots: playerContributions, playerBets: currentGameStats.playerBets };
-                    if (showLiveDeck) {
-                        tickData.deck = deck.cards;
-                    }
-                    if (showLiveTurn) {
-                        tickData.turnDetails = turnDetails;
-                    }
-                    self.postMessage({ type: 'tick', data: tickData });
+                        if (pot <= 0) {
+                            if (currentGameStats.length >= simulationState.config.game.minTotalBets || Math.abs(pot) >= simulationState.config.game.minPotClearValue) gameRunning = false;
+                            else {
+                                if(!anteUp(gameLogForTurn)) gameRunning = false;
+                                playerContributions = players.reduce((acc, p) => ({ ...acc, [p.id]: 0 }), {});
+                                players.forEach(p => currentGameStats.playerPotHistory[p.id] = []);
+                            }
+                        }
+
+                        if (players.every(p => !p.isActive)) gameRunning = false;
+
+                        const { spreads, potHistory, playerPotHistory, ...restOfStats } = currentGameStats;
+                        const tickData = { ...restOfStats, latestPot: pot, spreads, playerPots: playerContributions, playerBets: currentGameStats.playerBets };
+                        if (simulationState.config.showLiveDeck) tickData.deck = deck.cards;
+                        if (simulationState.config.showLiveTurn) tickData.turnDetails = turnDetails;
+                        self.postMessage({ type: 'tick', data: tickData });
+                    });
                 }
-
-                if (self.shouldStop) break;
 
                 currentGameStats.duration = (performance.now() - startTime) / 1000;
                 players.forEach(p => {
                     currentGameStats.playerFinalFinancials[p.id] = { finalMoney: p.money, rebuyAmountUsed: p.rebuyAmountUsed, startMoney: p.startMoney };
                 });
 
-                self.postMessage({ type: 'gameComplete', data: { finalStats: currentGameStats, progress: (i + 1) / simulationCount, gameNum: i + 1, totalGames: simulationCount }});
+                self.postMessage({ type: 'gameComplete', data: { finalStats: currentGameStats, progress: (i + 1) / simulationState.config.simulationCount, gameNum: i + 1, totalGames: simulationState.config.simulationCount }});
             }
             self.postMessage({ type: 'complete' });
         }
@@ -616,7 +711,7 @@
             }
 
             bet = Math.max(0, Math.min(bet, pot));
-            bet = Math.round(bet); // Use round instead of floor to prevent off-by-one errors with small pots
+            bet = Math.round(bet);
 
             const evs = calculateEVsForBet(bet, spread, deck, perceivedDeck);
             return { bet, evs };
@@ -702,12 +797,6 @@
             }
             return stats;
         }
-
-        self.shouldStop = false;
-        self.onmessage = function(e) {
-            if (e.data.type === 'start') { self.shouldStop = false; runSimulation(e.data.config); }
-            else if (e.data.type === 'stop') { self.shouldStop = true; }
-        };
     </script>
 
 
@@ -718,6 +807,7 @@
         let simulationTimer = null;
         let simulationStartTime = 0;
         const simulationTimings = [];
+        let isSimulationPaused = false;
 
         let allCompletedGamesData = [];
         let currentLiveGameData = null;
@@ -776,6 +866,8 @@
             bettingStrategyTable: document.getElementById('betting-strategy-table'),
             startSimBtn: document.getElementById('start-simulation-btn'),
             stopSimBtn: document.getElementById('stop-simulation-btn'),
+            nextTurnBtn: document.getElementById('next-turn-btn'),
+            nextTurnBtnContainer: document.getElementById('next-turn-btn-container'),
             simCountInput: document.getElementById('simulation-count'),
             progressContainer: document.getElementById('progress-container'),
             progressBar: document.getElementById('progress-bar'),
@@ -837,8 +929,12 @@
             DOM.cardCounting.addEventListener('change', (e) => {
                 DOM.customRanksContainer.classList.toggle('hidden', e.target.value !== 'custom');
             });
-            DOM.startSimBtn.addEventListener('click', startSimulation);
+            DOM.startSimBtn.addEventListener('click', startOrResumeSimulation);
             DOM.stopSimBtn.addEventListener('click', stopSimulation);
+            DOM.nextTurnBtn.addEventListener('click', () => {
+                DOM.nextTurnBtn.disabled = true;
+                simulationWorker.postMessage({ type: 'nextTurn' })
+            });
             DOM.exportConfigBtn.addEventListener('click', exportConfig);
             DOM.importConfigBtn.addEventListener('click', () => DOM.importFileInput.click());
             DOM.importFileInput.addEventListener('change', importConfig);
@@ -895,18 +991,13 @@
                     "id": "player-1759696538976",
                     "name": "Nathan",
                     "startMoney": 20,
-                    "stopLoss": null,
-                    "rebuy": {
-                        "strategy": "cover_bet",
-                        "amount": 50,
-                        "count": Infinity
-                    },
-                    "cardCounting": "none",
-                    "customRanks": [],
+                    "stopLoss": 50,
+                    "rebuy": { "strategy": "cover_bet", "amount": 50, "count": Infinity },
+                    "cardCounting": "none", "customRanks": [],
                     "bettingStrategy": [
-                        { "type": "min", "value": 25 }, { "type": "min", "value": 25 }, { "type": "min", "value": 25 },
-                        { "type": "min", "value": 25 }, { "type": "min", "value": 25 }, { "type": "min", "value": 25 },
-                        { "type": "min", "value": 25 }, { "type": "min", "value": 25 }, { "type": "min", "value": 25 },
+                        { "type": "min", "value": 1 }, { "type": "min", "value": 1 }, { "type": "min", "value": 1 },
+                        { "type": "min", "value": 1 }, { "type": "min", "value": 1 }, { "type": "min", "value": 1 },
+                        { "type": "min", "value": 1 }, { "type": "min", "value": 1 }, { "type": "ante", "value": 5 },
                         { "type": "ante", "value": 5 }, { "type": "ante", "value": 5 }, { "type": "ante", "value": 5 },
                         { "type": "ante", "value": 5 }
                     ]
@@ -915,18 +1006,13 @@
                     "id": "player-1759696864616",
                     "name": "Rob",
                     "startMoney": 20,
-                    "stopLoss": null,
-                    "rebuy": {
-                        "strategy": "cover_bet",
-                        "amount": 50,
-                        "count": Infinity
-                    },
-                    "cardCounting": "none",
-                    "customRanks": [],
+                    "stopLoss": 50,
+                    "rebuy": { "strategy": "cover_bet", "amount": 50, "count": Infinity },
+                    "cardCounting": "none", "customRanks": [],
                     "bettingStrategy": [
                         { "type": "min", "value": 1 }, { "type": "min", "value": 1 }, { "type": "min", "value": 1 },
                         { "type": "min", "value": 1 }, { "type": "min", "value": 1 }, { "type": "min", "value": 1 },
-                        { "type": "min", "value": 1 }, { "type": "min", "value": 1 }, { "type": "min", "value": 1 },
+                        { "type": "min", "value": 1 }, { "type": "ante", "value": 1 }, { "type": "pot", "value": 100 },
                         { "type": "pot", "value": 100 }, { "type": "pot", "value": 100 }, { "type": "pot", "value": 100 },
                         { "type": "pot", "value": 100 }
                     ]
@@ -1028,7 +1114,7 @@
         // --- SIMULATION HANDLING ---
 
         function initWorker() {
-            if (simulationWorker) simulationWorker.terminate();
+            if (simulationWorker) simulationWorker.postMessage({type: 'terminate'});
             const workerScript = document.getElementById('simulator-worker').textContent;
             const workerBlob = new Blob([workerScript], { type: 'application/javascript' });
             simulationWorker = new Worker(URL.createObjectURL(workerBlob));
@@ -1055,12 +1141,9 @@
                     const { latestPot, playerPots, playerBets, deck, turnDetails, ...rest } = data;
                     currentLiveGameData = rest;
 
-                    if (deck) {
-                        renderLiveDeck(deck);
-                    }
-                    if (turnDetails) {
-                        renderLiveTurn(turnDetails);
-                    }
+                    if (deck) renderLiveDeck(deck);
+                    if (turnDetails) renderLiveTurn(turnDetails);
+
                     redrawAllCharts();
                     break;
                 case 'gameComplete':
@@ -1072,24 +1155,57 @@
                     simulationTimings.push(data.finalStats.duration);
                     updateProgress(data);
                     redrawAllCharts();
+                    DOM.liveTurnDisplay.innerHTML = '';
                     break;
                 case 'complete':
                     finalizeSimulation();
                     break;
+                case 'paused':
+                    isSimulationPaused = true;
+                    DOM.stopSimBtn.classList.add('hidden');
+                    DOM.startSimBtn.textContent = 'Resume Simulation';
+                    DOM.startSimBtn.disabled = false;
+                    DOM.startSimBtn.classList.remove('hidden');
+                    DOM.nextTurnBtnContainer.classList.remove('hidden');
+                    DOM.nextTurnBtn.disabled = false;
+                    clearInterval(simulationTimer);
+                    break;
+                case 'resumed':
+                    isSimulationPaused = false;
+                    DOM.stopSimBtn.disabled = false;
+                    DOM.stopSimBtn.classList.remove('hidden');
+                    DOM.startSimBtn.classList.add('hidden');
+                    DOM.nextTurnBtnContainer.classList.add('hidden');
+                    startTimer();
+                    break;
+                case 'readyForNextTurn':
+                    DOM.nextTurnBtn.disabled = false;
+                    break;
             }
         }
 
-        function startSimulation() {
+        function startOrResumeSimulation() {
+            if (isSimulationPaused) {
+                if (simulationWorker) {
+                    simulationWorker.postMessage({ type: 'resume' });
+                }
+                return;
+            }
+
+            // --- Start new simulation ---
             if (players.length === 0) { alert('Please add at least one player.'); return; }
 
             if (DOM.configPanel.classList.contains('hidden') === false) {
                  toggleConfigPanel();
             }
             DOM.toggleConfigBtnContainer.classList.remove('hidden');
-            DOM.startSimBtn.disabled = true;
+            DOM.startSimBtn.classList.add('hidden');
             DOM.stopSimBtn.disabled = false;
+            DOM.stopSimBtn.classList.remove('hidden');
             DOM.resultsContainer.classList.remove('hidden');
             DOM.progressContainer.classList.remove('hidden');
+            isSimulationPaused = false;
+            DOM.nextTurnBtnContainer.classList.add('hidden');
 
             elementsToHideDuringSim.forEach(id => document.getElementById(id)?.classList.add('hidden'));
 
@@ -1122,47 +1238,62 @@
             setupPlayerBetAmountCharts();
             simulationStartTime = performance.now();
             updateProgress({progress: 0, gameNum: -1, totalGames: config.simulationCount});
+            startTimer();
+            simulationWorker.postMessage({ type: 'start', config });
+        }
+
+        function stopSimulation() {
+            if (simulationWorker) {
+                simulationWorker.postMessage({ type: 'stop' });
+            }
+        }
+
+        function startTimer() {
+            const simulationCount = parseInt(DOM.simCountInput.value);
+            clearInterval(simulationTimer);
             simulationTimer = setInterval(() => {
                 const elapsedSeconds = Math.round((performance.now() - simulationStartTime) / 1000);
                 DOM.elapsedTimeText.textContent = `Elapsed: ${elapsedSeconds}s`;
                  if (simulationTimings.length > 0) {
                     const avgTime = simulationTimings.reduce((a, b) => a + b, 0) / simulationTimings.length;
-                    const etaSeconds = Math.round(avgTime * (config.simulationCount - allCompletedGamesData.length));
+                    const etaSeconds = Math.round(avgTime * (simulationCount - allCompletedGamesData.length));
                     DOM.etaText.textContent = `ETA: ${etaSeconds}s`;
                 } else if (allCompletedGamesData.length > 0) {
                     const elapsed = (performance.now() - simulationStartTime) / 1000;
                     const timePerGame = elapsed / allCompletedGamesData.length;
-                    const etaSeconds = Math.round(timePerGame * (config.simulationCount - allCompletedGamesData.length));
+                    const etaSeconds = Math.round(timePerGame * (simulationCount - allCompletedGamesData.length));
                      DOM.etaText.textContent = `ETA: ${etaSeconds}s`;
                 }
             }, 1000);
-            simulationWorker.postMessage({ type: 'start', config });
         }
 
-        function stopSimulation() {
-            if(simulationWorker) {
-                simulationWorker.terminate();
-                clearInterval(simulationTimer);
-                DOM.stopSimBtn.disabled = true;
-                DOM.startSimBtn.disabled = false;
-                DOM.progressText.textContent = "Stopped by user.";
-                elementsToHideDuringSim.forEach(id => document.getElementById(id)?.classList.remove('hidden'));
-                 DOM.liveDeckDisplay.classList.add('hidden');
-                 DOM.liveTurnDisplay.classList.add('hidden');
+        function togglePauseSimulation() {
+            if (simulationWorker) {
+                if (isSimulationPaused) {
+                    simulationWorker.postMessage({ type: 'resume' });
+                } else {
+                    simulationWorker.postMessage({ type: 'stop' });
+                }
             }
         }
+
 
         function finalizeSimulation() {
             clearInterval(simulationTimer);
             DOM.startSimBtn.disabled = false;
+            DOM.startSimBtn.classList.remove('hidden');
+            DOM.startSimBtn.textContent = 'Start Simulation';
             DOM.stopSimBtn.disabled = true;
+            DOM.stopSimBtn.classList.add('hidden'); // Ensure it's hidden
+            DOM.nextTurnBtnContainer.classList.add('hidden');
+            isSimulationPaused = false;
+
             DOM.progressText.textContent = "Finished!";
             const elapsedSeconds = Math.round((performance.now() - simulationStartTime) / 1000);
             DOM.elapsedTimeText.textContent = `Total Time: ${elapsedSeconds}s`;
             DOM.etaText.textContent = `ETA: 0s`;
             elementsToHideDuringSim.forEach(id => document.getElementById(id)?.classList.remove('hidden'));
             DOM.liveDeckDisplay.classList.add('hidden');
-            DOM.liveTurnDisplay.classList.add('hidden');
         }
 
         function updateProgress(data) {
@@ -1179,7 +1310,7 @@
                 return;
             }
 
-            const isSimulating = DOM.stopSimBtn.disabled === false;
+            const isSimulating = DOM.stopSimBtn.disabled === false && !isSimulationPaused;
 
             plotPotHistoryChart(allCompletedGamesData, currentLiveGameData);
             if(theoreticalStats) updateSpreadAnalysisTable();
@@ -1209,6 +1340,57 @@
             return `<span class="${color} font-mono">${rankSymbols[card.rank]}${suitSymbols[card.suit]}</span>`;
         }
 
+        const turnLog = [];
+        let lastTurnPlayer = null;
+
+        function renderLiveTurn(turnData) {
+            const { playerName, card1, card2, spread, betAmount, card3, outcome, log, playerMoneyBefore } = turnData;
+
+            if (lastTurnPlayer !== playerName) {
+                turnLog.push(`<hr class="border-gray-600 my-2">`);
+                lastTurnPlayer = playerName;
+            }
+
+            let html = `<div><b>Turn for ${playerName} ($${(playerMoneyBefore/100).toFixed(2)}):</b></div>`;
+
+            (log || []).forEach(logEntry => {
+                switch(logEntry.type) {
+                    case 'rebuy':
+                        html += `<div class="text-blue-400 pl-2">↪ Rebuy: +$${(logEntry.amount/100).toFixed(2)} for ${logEntry.playerName}. (${logEntry.remaining} left)</div>`;
+                        break;
+                    case 'stoploss':
+                         html += `<div class="text-red-500 font-bold pl-2">🛑 Stop-Loss hit for ${logEntry.playerName} at $${(logEntry.threshold/100).toFixed(2)}.</div>`;
+                        break;
+                }
+            });
+
+            html += `<div class="pl-2">Offered: ${formatCard(card1)} ${formatCard(card2)} (Sprd: ${spread})</div>`;
+
+            if (outcome === 'pending') {
+                html += `<div class="pl-2">Betting $${(betAmount / 100).toFixed(2)}...</div>`;
+            } else if (outcome === 'quit') {
+                html += `<div class="text-red-500 font-bold pl-2">QUIT (can't cover bet of $${(betAmount / 100).toFixed(2)})</div>`;
+            } else if (betAmount > 0) {
+                let outcomeText = '';
+                let outcomeColor = '';
+                switch(outcome) {
+                    case 'win': outcomeText = `WIN (+$${(betAmount/100).toFixed(2)})`; outcomeColor = 'text-green-400'; break;
+                    case 'loss': outcomeText = `LOSS (-$${(betAmount/100).toFixed(2)})`; outcomeColor = 'text-yellow-400'; break;
+                    case 'dloss': outcomeText = `D-LOSS (-$${(betAmount*2/100).toFixed(2)})`; outcomeColor = 'text-red-400'; break;
+                }
+                html += `<div class="pl-2">Bet $${(betAmount/100).toFixed(2)} -> Result: ${formatCard(card3)} <b class="${outcomeColor}">${outcomeText}</b></div>`;
+
+            } else {
+                html += `<div class="pl-2">Bet: $0.00 (Pass)</div>`;
+            }
+
+            turnLog.push(html);
+            if (turnLog.length > 100) turnLog.shift(); // Keep log from getting too long
+
+            DOM.liveTurnDisplay.innerHTML = turnLog.join('');
+            DOM.liveTurnDisplay.scrollTop = DOM.liveTurnDisplay.scrollHeight;
+        }
+
         function renderInitialDeck(deck) {
             let html = '<div class="mb-2"><b>Initial Deck:</b><div class="flex flex-wrap gap-1">';
             html += deck.map(formatCard).join(' ');
@@ -1223,33 +1405,6 @@
             html += '</div></div>';
             DOM.liveDeckDisplay.innerHTML = html;
         }
-
-        function renderLiveTurn(turnData) {
-            const { playerName, card1, card2, spread, betAmount, card3, outcome } = turnData;
-            let html = `<div><b>Last Turn (${playerName}):</b></div>`;
-
-            html += `<div>Offered: ${formatCard(card1)} ${formatCard(card2)} (Sprd: ${spread})</div>`;
-
-            if (outcome === 'quit') {
-                html += `<div class="text-red-500 font-bold">QUIT (can't cover bet of $${(betAmount / 100).toFixed(2)})</div>`;
-            } else if (betAmount > 0) {
-                html += `<div>Bet: $${(betAmount / 100).toFixed(2)}</div>`;
-                let outcomeText = '';
-                let outcomeColor = '';
-                switch(outcome) {
-                    case 'win': outcomeText = 'WIN'; outcomeColor = 'text-green-400'; break;
-                    case 'loss': outcomeText = 'LOSS'; outcomeColor = 'text-yellow-400'; break;
-                    case 'dloss': outcomeText = 'D-LOSS'; outcomeColor = 'text-red-400'; break;
-                }
-                html += `<div>Result: ${formatCard(card3)} <b class="${outcomeColor}">${outcomeText}</b></div>`;
-
-            } else {
-                html += `<div>Bet: $0.00 (Pass)</div>`;
-            }
-
-            DOM.liveTurnDisplay.innerHTML = html;
-        }
-
 
         // --- PLOTTING ---
         const PLOTLY_LAYOUT_CONFIG = { paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { color: '#d1d5db' }, xaxis: { gridcolor: '#374151' }, yaxis: { gridcolor: '#374151' }, margin: { l: 60, r: 20, b: 50, t: 60 } };
