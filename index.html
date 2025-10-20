@@ -199,6 +199,9 @@
                                     <div id="live-turn-display" class="flex-grow pr-4 text-xs hidden h-80 overflow-y-auto bg-gray-800 p-2 rounded-md"></div>
                                     <div id="pot-size-chart" class="flex-grow h-80"></div>
                                 </div>
+                                 <div id="player-pot-history-container" class="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <!-- Player pot history heatmaps go here -->
+                                </div>
                                 <div class="md:col-span-2 overflow-x-auto pt-4">
                                     <h3 class="text-xl font-bold mb-2 pl-2">Spread Analysis</h3>
                                     <table class="w-full text-sm text-left">
@@ -477,7 +480,7 @@
                         }
 
                         let rebuyAmount = player.rebuy.strategy === 'cover_bet' ? amountNeeded - player.money : player.rebuy.amount;
-                        if (rebuyAmount <= 0) break;
+                        if (rebuyAmount <= 0) rebuyAmount = player.rebuy.amount; // Fallback for cover_bet if money is negative
 
                         player.money += rebuyAmount;
                         player.rebuyAmountUsed += rebuyAmount;
@@ -544,7 +547,7 @@
                     const userSpread = spread + 1;
 
                     const betDecision = getPlayerBet(currentPlayer, spread, pot, simulationState.config.game.ante, deck);
-                    const betAmount = Math.max(betDecision.bet, simulationState.config.game.ante);
+                    const betAmount = Math.max(betDecision.bet, 0); // Allow zero bets
 
                     let turnDetails = null;
 
@@ -870,6 +873,7 @@
             spreadAnalysisTable: document.getElementById('spread-analysis-table'),
             playerWinLossContainer: document.getElementById('player-win-loss-container'),
             playerBetAmountContainer: document.getElementById('player-bet-amount-container'),
+            playerPotHistoryContainer: document.getElementById('player-pot-history-container'),
             gaveUpHeatmapContainer: document.getElementById('gave-up-heatmap-container'),
             gameLengthHeatmapContainer: document.getElementById('game-length-heatmap-container'),
             antesMadeHeatmapContainer: document.getElementById('antes-made-heatmap-container'),
@@ -883,7 +887,8 @@
             'antes-made-heatmap-container',
             'shuffles-heatmap-container',
             'game-time-heatmap-container',
-            'player-stats-details'
+            'player-stats-details',
+            'player-pot-history-container'
         ];
 
 
@@ -891,6 +896,7 @@
             setupEventListeners();
             createBettingStrategyTable();
             addDefaultPlayers();
+            updatePlayerColors();
             renderPlayerList();
         }
 
@@ -1001,6 +1007,15 @@
             players.push(...defaultPlayers);
         }
 
+        function updatePlayerColors() {
+            const colorPalette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
+            players.forEach((p, i) => {
+                if (!playerColors[p.id]) {
+                    playerColors[p.id] = colorPalette[Object.keys(playerColors).length % colorPalette.length];
+                }
+            });
+        }
+
         function openPlayerModal(playerId = null) {
             const isEditing = !!playerId;
             DOM.modalTitle.textContent = isEditing ? 'Edit Player' : 'Add Player';
@@ -1070,8 +1085,12 @@
                 };
             }
 
-            if(isEditing) players = players.map(p => p.id === id ? player : p);
-            else players.push(player);
+            if(isEditing) {
+                players = players.map(p => p.id === id ? player : p);
+            } else {
+                players.push(player);
+            }
+            updatePlayerColors();
             renderPlayerList();
             closePlayerModal();
         }
@@ -1082,10 +1101,20 @@
             players.forEach(player => {
                 const playerDiv = document.createElement('div');
                 playerDiv.className = 'flex justify-between items-center bg-gray-700 p-2 rounded-lg';
-                playerDiv.innerHTML = `<span class="font-medium">${player.name}</span> <div class="flex gap-2"> <button class="btn btn-secondary btn-sm" data-id="${player.id}">Edit</button> <button class="btn btn-danger btn-sm" data-id="${player.id}">Delete</button> </div>`;
+                playerDiv.innerHTML = `
+                    <div class="flex items-center gap-2">
+                        <span class="w-4 h-4 rounded-full" style="background-color: ${playerColors[player.id]}"></span>
+                        <span class="font-medium">${player.name}</span>
+                    </div>
+                    <div class="flex gap-2">
+                        <button class="btn btn-secondary btn-sm" data-id="${player.id}">Edit</button>
+                        <button class="btn btn-danger btn-sm" data-id="${player.id}">Delete</button>
+                    </div>`;
                 playerDiv.querySelector('button.btn-secondary').addEventListener('click', (e) => openPlayerModal(e.target.dataset.id));
                 playerDiv.querySelector('button.btn-danger').addEventListener('click', (e) => {
-                    players = players.filter(p => p.id !== e.target.dataset.id); renderPlayerList();
+                    players = players.filter(p => p.id !== e.target.dataset.id);
+                    updatePlayerColors();
+                    renderPlayerList();
                 });
                 DOM.playerList.appendChild(playerDiv);
             });
@@ -1135,7 +1164,7 @@
                     simulationTimings.push(data.finalStats.duration);
                     updateProgress(data);
                     redrawAllCharts();
-                    DOM.liveTurnDisplay.innerHTML = '';
+                    if(DOM.liveTurnDisplay) DOM.liveTurnDisplay.innerHTML = '';
                     break;
                 case 'complete':
                     finalizeSimulation();
@@ -1196,10 +1225,7 @@
 
             allCompletedGamesData = []; currentLiveGameData = null; simulationTimings.length = 0; theoreticalStats = null; currentLiveGamePotHistory = []; currentLivePlayerPotHistory = {}; currentLivePlayerBets = {};
 
-            const colorPalette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
-            playerColors = {};
-            players.forEach((p, i) => playerColors[p.id] = colorPalette[i % colorPalette.length]);
-
+            updatePlayerColors();
 
             const toCents = val => Math.round(val * 100);
             const gameConfig = { ante: toCents(parseFloat(DOM.anteAmount.value)), startingPot: toCents(parseFloat(DOM.startingPot.value)), minTotalBets: parseInt(DOM.minTotalBets.value), minPotClearValue: toCents(parseFloat(DOM.minPotClearValue.value)) };
@@ -1216,6 +1242,7 @@
             initWorker();
             setupPlayerWinLossCharts();
             setupPlayerBetAmountCharts();
+            setupPlayerPotHistoryCharts();
             simulationStartTime = performance.now();
             updateProgress({progress: 0, gameNum: -1, totalGames: config.simulationCount});
             startTimer();
@@ -1247,24 +1274,13 @@
             }, 1000);
         }
 
-        function togglePauseSimulation() {
-            if (simulationWorker) {
-                if (isSimulationPaused) {
-                    simulationWorker.postMessage({ type: 'resume' });
-                } else {
-                    simulationWorker.postMessage({ type: 'stop' });
-                }
-            }
-        }
-
-
         function finalizeSimulation() {
             clearInterval(simulationTimer);
             DOM.startSimBtn.disabled = false;
             DOM.startSimBtn.classList.remove('hidden');
             DOM.startSimBtn.textContent = 'Start Simulation';
             DOM.stopSimBtn.disabled = true;
-            DOM.stopSimBtn.classList.add('hidden'); // Ensure it's hidden
+            DOM.stopSimBtn.classList.add('hidden');
             DOM.nextTurnBtnContainer.classList.add('hidden');
             isSimulationPaused = false;
 
@@ -1273,6 +1289,7 @@
             DOM.elapsedTimeText.textContent = `Total Time: ${elapsedSeconds}s`;
             DOM.etaText.textContent = `ETA: 0s`;
             elementsToHideDuringSim.forEach(id => document.getElementById(id)?.classList.remove('hidden'));
+            redrawAllCharts(); // Final redraw to show all stats
             DOM.liveDeckDisplay.classList.add('hidden');
         }
 
@@ -1290,7 +1307,7 @@
                 return;
             }
 
-            const isSimulating = DOM.stopSimBtn.disabled === false && !isSimulationPaused;
+            const isSimulating = !DOM.stopSimBtn.classList.contains('hidden') && !isSimulationPaused;
 
             plotPotHistoryChart(allCompletedGamesData, currentLiveGameData);
             if(theoreticalStats) updateSpreadAnalysisTable();
@@ -1307,6 +1324,7 @@
                     plotHeatmap('gave-up-heatmap', '# of Players Who Gave Up', allCompletedGamesData.map(g => g.playersGaveUp), currentLiveGameData?.playersGaveUp);
                 }
 
+                plotPlayerPotHistoryCharts();
                 plotPlayerWinLossCharts();
                 plotPlayerBetAmountCharts();
             }
@@ -1327,7 +1345,7 @@
             const { playerName, card1, card2, spread, betAmount, card3, outcome, log, playerMoneyBefore } = turnData;
 
             if (lastTurnPlayer !== playerName) {
-                turnLog.push(`<hr class="border-gray-600 my-2">`);
+                if(turnLog.length > 0) turnLog.push(`<hr class="border-gray-600 my-2">`);
                 lastTurnPlayer = playerName;
             }
 
@@ -1436,46 +1454,47 @@
             return { centers, counts };
         }
 
-        function plotHeatmap(elementId, title, completedData, liveValue, tickPrefix = '') {
-            const { centers, counts } = getHistogramData(completedData);
-            const trace = {
-                x: centers, y: [''], z: [counts], type: 'heatmap',
-                colorscale: [[0, 'rgba(255, 255, 255, 0)'], [1, 'rgba(255, 255, 255, 1)']],
-                showscale: false, hoverinfo: 'x+z', hovertemplate: `Value: %{x:.2f}<br>Count: %{z}<extra></extra>`
-            };
-            const shapes = [];
-            if (liveValue !== null && liveValue !== undefined) {
-                 shapes.push({ type: 'line', yref: 'paper', x0: liveValue, x1: liveValue, y0: 0, y1: 1, line: { color: '#ef4444', width: 2, dash: 'dash' } });
-            }
-            const layout = { ...PLOTLY_LAYOUT_CONFIG, title, shapes, yaxis: { showticklabels: false }, xaxis: {...PLOTLY_LAYOUT_CONFIG.xaxis, tickprefix: tickPrefix} };
-            Plotly.react(elementId, [trace], layout, {responsive: true});
+        function hexToRgb(hex) {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : null;
+        }
+
+        function createColorScale(hex) {
+            const rgb = hexToRgb(hex);
+            if (!rgb) return 'Blues';
+            return [[0, `rgba(${rgb}, 0)`], [1, `rgba(${rgb}, 1)`]];
         }
 
         function plotPotHistoryChart(completedGames, liveGame) {
             const traces = [];
-            const layout = { ...PLOTLY_LAYOUT_CONFIG, title: 'Pot Size History', yaxis: { ...PLOTLY_LAYOUT_CONFIG.yaxis, tickprefix: '$', tickformat: ',.2f' }, xaxis: {title: 'Game Progression (%)'}, showlegend: true };
+
+            let maxGameLength = 0;
+            completedGames.forEach(game => {
+                if (game.potHistory.length > maxGameLength) maxGameLength = game.potHistory.length;
+            });
+            if (liveGame && currentLiveGamePotHistory.length > maxGameLength) {
+                maxGameLength = currentLiveGamePotHistory.length;
+            }
+            if (maxGameLength === 0) maxGameLength = 1;
+
+            const layout = { ...PLOTLY_LAYOUT_CONFIG, title: 'Pot Size History', yaxis: { ...PLOTLY_LAYOUT_CONFIG.yaxis, tickprefix: '$', tickformat: ',.2f' }, xaxis: {title: 'Bet Number', range: [0, maxGameLength]}, showlegend: false };
 
             if (completedGames.length > 0) {
-                const xBins = 100;
                 const yBins = 50;
-                const z = Array(yBins).fill(0).map(() => Array(xBins).fill(0));
+                const z = Array(yBins).fill(0).map(() => Array(maxGameLength).fill(0));
 
                 let maxPot = 0;
                 completedGames.forEach(game => {
-                    if(game.potHistory.length === 0) return;
-                    const gameMaxPot = Math.max(...game.potHistory);
+                    const gameMaxPot = Math.max(...game.potHistory, 0);
                     if (gameMaxPot > maxPot) maxPot = gameMaxPot;
                 });
                 if (maxPot === 0) maxPot = 1;
 
                 completedGames.forEach(game => {
-                    const gameLength = game.potHistory.length;
-                    if (gameLength === 0) return;
                     game.potHistory.forEach((potValue, step) => {
-                        const xBin = Math.min(xBins - 1, Math.floor((step / gameLength) * xBins));
                         const yBin = Math.min(yBins - 1, Math.floor((potValue / maxPot) * yBins));
-                        if (xBin >= 0 && yBin >= 0) {
-                            z[yBin][xBin]++;
+                        if (step < maxGameLength && yBin >= 0) {
+                            z[yBin][step]++;
                         }
                     });
                 });
@@ -1483,46 +1502,93 @@
                 traces.push({
                     z: z,
                     type: 'heatmap',
-                    colorscale: [[0, 'rgba(255, 255, 255, 0)'], [1, 'rgba(255, 255, 255, 1)']],
+                    colorscale: 'Blues',
+                    reversescale: true,
                     showscale: false,
-                    x: Array.from({length: xBins}, (_, i) => i * (100/xBins)),
                     y: Array.from({length: yBins}, (_, i) => i * (maxPot / yBins / 100)),
-                    hovertemplate: 'Progression: %{x:.0f}%<br>Pot Size: ~%{y:$.2f}<br>Frequency: %{z}<extra></extra>',
+                    hovertemplate: 'Bet #: %{x}<br>Pot Size: ~%{y:$.2f}<br>Frequency: %{z}<extra></extra>',
                     name: 'Historical Density'
                 });
             }
 
             if(liveGame) {
                 const livePotHistory = simplifyData(currentLiveGamePotHistory.map(p => p/100));
-                const liveGameLength = livePotHistory.length;
-                if (liveGameLength > 1) {
-                    traces.push({
-                        x: livePotHistory.map((_, i) => (i / (liveGameLength - 1)) * 100),
-                        y: livePotHistory,
-                        mode: 'lines',
-                        line: { width: 2.5, color: '#ef4444' },
-                        name: `Live Pot (Game ${liveGame.gameNum})`
-                    });
-                }
+                traces.push({
+                    x: livePotHistory.map((_, i) => i),
+                    y: livePotHistory,
+                    mode: 'lines',
+                    line: { width: 2.5, color: '#ef4444' },
+                    name: `Live Pot (Game ${liveGame.gameNum})`
+                });
 
                 players.forEach(player => {
                     if (currentLivePlayerPotHistory[player.id]) {
-                        const liveHistory = simplifyData((currentLivePlayerPotHistory[player.id] || []).map(p => p/100));
-                        const liveGameLength = liveHistory.length;
-                        if (liveGameLength > 1) {
-                            traces.push({
-                                x: liveHistory.map((_, i) => (i / (liveGameLength - 1)) * 100),
-                                y: liveHistory,
-                                mode: 'lines',
-                                line: { width: 1.5, color: playerColors[player.id] },
-                                name: player.name
-                            });
-                        }
+                        const liveHistory = (currentLivePlayerPotHistory[player.id] || []).map(p => p/100);
+                        traces.push({
+                            x: liveHistory.map((_, i) => i),
+                            y: liveHistory,
+                            mode: 'lines',
+                            line: { width: 1.5, color: playerColors[player.id] },
+                            name: player.name
+                        });
                     }
                 });
             }
 
             Plotly.react('pot-size-chart', traces, layout, {responsive: true});
+        }
+
+        function setupPlayerPotHistoryCharts() {
+            DOM.playerPotHistoryContainer.innerHTML = '';
+            players.forEach(player => {
+                const div = document.createElement('div');
+                div.id = `player-pot-history-${player.id}`;
+                div.className = 'h-96';
+                DOM.playerPotHistoryContainer.appendChild(div);
+            });
+        }
+
+        function plotPlayerPotHistoryCharts() {
+            let maxGameLength = 0;
+            allCompletedGamesData.forEach(game => {
+                Object.values(game.playerPotHistory).forEach(history => {
+                    if (history.length > maxGameLength) maxGameLength = history.length;
+                });
+            });
+             if (maxGameLength === 0) maxGameLength = 1;
+
+            players.forEach(player => {
+                const yBins = 25;
+                const z = Array(yBins).fill(0).map(() => Array(maxGameLength).fill(0));
+                let maxPlayerPot = 0;
+
+                allCompletedGamesData.forEach(game => {
+                    const history = game.playerPotHistory[player.id] || [];
+                    const gameMax = Math.max(...history, 0);
+                    if (gameMax > maxPlayerPot) maxPlayerPot = gameMax;
+                });
+                if(maxPlayerPot === 0) maxPlayerPot = 1;
+
+                allCompletedGamesData.forEach(game => {
+                    const history = game.playerPotHistory[player.id] || [];
+                    history.forEach((val, step) => {
+                        const yBin = Math.min(yBins - 1, Math.floor((val / maxPlayerPot) * yBins));
+                        if(step < maxGameLength && yBin >=0) z[yBin][step]++;
+                    });
+                });
+
+                const trace = {
+                    z: z,
+                    type: 'heatmap',
+                    colorscale: createColorScale(playerColors[player.id]),
+                    showscale: false,
+                    y: Array.from({length: yBins}, (_, i) => i * (maxPlayerPot / yBins / 100)),
+                    hovertemplate: 'Bet #: %{x}<br>Pot Share: ~%{y:$.2f}<br>Frequency: %{z}<extra></extra>'
+                };
+
+                const layout = { ...PLOTLY_LAYOUT_CONFIG, title: `${player.name}: Pot Contribution History`, yaxis: { ...PLOTLY_LAYOUT_CONFIG.yaxis, tickprefix: '$' }, xaxis: {title: 'Bet Number', range: [0, maxGameLength]} };
+                Plotly.react(`player-pot-history-${player.id}`, [trace], layout, {responsive: true});
+            });
         }
 
         function setupPlayerWinLossCharts() {
@@ -1566,6 +1632,22 @@
                 plotHeatmap(`player-bet-amount-${player.id}`, `${player.name}: Bet Amounts ($)`, allBets, liveBet, '$');
             });
         }
+
+        function plotHeatmap(elementId, title, completedData, liveValue, tickPrefix = '') {
+            const { centers, counts } = getHistogramData(completedData);
+            const trace = {
+                x: centers, y: [''], z: [counts], type: 'heatmap',
+                colorscale: [[0, 'rgba(59, 130, 246, 0.2)'], [1, 'rgba(59, 130, 246, 1)']],
+                showscale: false, hoverinfo: 'x+z', hovertemplate: `Value: %{x:.2f}<br>Count: %{z}<extra></extra>`
+            };
+            const shapes = [];
+            if (liveValue !== null && liveValue !== undefined) {
+                 shapes.push({ type: 'line', yref: 'paper', x0: liveValue, x1: liveValue, y0: 0, y1: 1, line: { color: '#ef4444', width: 2, dash: 'dash' } });
+            }
+            const layout = { ...PLOTLY_LAYOUT_CONFIG, title, shapes, yaxis: { showticklabels: false }, xaxis: {...PLOTLY_LAYOUT_CONFIG.xaxis, tickprefix: tickPrefix} };
+            Plotly.react(elementId, [trace], layout, {responsive: true});
+        }
+
 
         function updateSpreadAnalysisTable() {
             const getColorStyle = (value, baseline, cap) => {
@@ -1690,6 +1772,7 @@
                     DOM.minTotalBets.value = config.game.minTotalBets;
                     DOM.minPotClearValue.value = config.game.minPotClearValue;
                     players = config.players;
+                    updatePlayerColors();
                     renderPlayerList();
                 } catch(err) { alert('Error parsing configuration file.'); console.error(err); }
             };
