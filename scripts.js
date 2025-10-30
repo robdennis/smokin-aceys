@@ -4,7 +4,7 @@ let simulationWorker = null;
 let simulationTimer = null;
 let simulationStartTime = 0;
 const simulationTimings = [];
-let isSimulationHalted = false; // State for the checkbox
+let isPaused = false; // New state for pause/resume
 
 let allCompletedGamesData = [];
 let currentLiveGameData = null;
@@ -14,22 +14,21 @@ let currentLivePlayerBets = {};
 let theoreticalStats = null;
 let playerColors = {};
 
-
 function calculateTheoreticalStatsForUI() {
     const stats = [];
     for (let userSpread = 0; userSpread <= 12; userSpread++) {
         let win_ranks = userSpread > 0 ? userSpread - 1 : 0;
         let dloss_ranks = userSpread > 0 ? 2 : 1;
         let loss_ranks = 13 - win_ranks - dloss_ranks;
-        let ev = (win_ranks/13 * 1) - (loss_ranks/13 * 1) - (dloss_ranks/13 * 2);
-         let pairCount = 0;
+        let ev = (win_ranks / 13 * 1) - (loss_ranks / 13 * 1) - (dloss_ranks / 13 * 2);
+        let pairCount = 0;
         const totalPairs = (52 * 51) / 2;
         if (userSpread === 0) pairCount = 13 * (4 * 3 / 2);
         else { const rankDistance = userSpread; pairCount = (13 - rankDistance) * 4 * 4; }
 
         stats[userSpread] = {
-            win: (win_ranks/13) * 100, loss: (loss_ranks/13) * 100,
-            dloss: (dloss_ranks/13) * 100, ev: ev,
+            win: (win_ranks / 13) * 100, loss: (loss_ranks / 13) * 100,
+            dloss: (dloss_ranks / 13) * 100, ev: ev,
             occur: (pairCount / totalPairs) * 100
         };
     }
@@ -63,9 +62,7 @@ const DOM = {
     bettingStrategyTable: document.getElementById('betting-strategy-table'),
     startSimBtn: document.getElementById('start-simulation-btn'),
     stopSimBtn: document.getElementById('stop-simulation-btn'),
-    haltSimCheckbox: document.getElementById('halt-simulation-checkbox'), // New checkbox
-    nextTurnBtn: document.getElementById('next-turn-btn'),
-    nextTurnBtnContainer: document.getElementById('next-turn-btn-container'),
+    resetSimBtn: document.getElementById('reset-simulation-btn'), // New Reset Button
     simCountInput: document.getElementById('simulation-count'),
     progressContainer: document.getElementById('progress-container'),
     progressBar: document.getElementById('progress-bar'),
@@ -106,7 +103,6 @@ const elementsToHideDuringSim = [
     'player-pot-history-container'
 ];
 
-
 function initialize() {
     setupEventListeners();
     createBettingStrategyTable();
@@ -132,36 +128,46 @@ function setupEventListeners() {
     });
     DOM.startSimBtn.addEventListener('click', startSimulation);
     DOM.stopSimBtn.addEventListener('click', stopSimulation);
-    DOM.haltSimCheckbox.addEventListener('change', (e) => {
-        console.log(`[UI] Halt checkbox changed: ${e.target.checked}`);
-        isSimulationHalted = e.target.checked;
-        if (simulationWorker) {
-            simulationWorker.postMessage({ type: 'halt', checked: isSimulationHalted });
-        }
-        DOM.nextTurnBtnContainer.classList.toggle('hidden', !isSimulationHalted);
-    });
-    DOM.nextTurnBtn.addEventListener('click', () => {
-        console.log('[UI] Next Turn button clicked');
-        DOM.nextTurnBtn.disabled = true;
-        if (simulationWorker) {
-            simulationWorker.postMessage({ type: 'nextTurn' });
-        }
-    });
+    DOM.resetSimBtn.addEventListener('click', resetSimulation); // New listener
     DOM.exportConfigBtn.addEventListener('click', exportConfig);
     DOM.importConfigBtn.addEventListener('click', () => DOM.importFileInput.click());
     DOM.importFileInput.addEventListener('change', importConfig);
     DOM.toggleConfigBtn.addEventListener('click', toggleConfigPanel);
 }
 
+function resetSimulation() {
+    if (simulationWorker) {
+        simulationWorker.terminate();
+        simulationWorker = null;
+    }
+    isPaused = false;
+    allCompletedGamesData = [];
+    currentLiveGameData = null;
+    simulationTimings.length = 0;
+    theoreticalStats = null;
+    currentLiveGamePotHistory = [];
+    currentLivePlayerPotHistory = {};
+    currentLivePlayerBets = {};
+
+    clearInterval(simulationTimer);
+    DOM.startSimBtn.textContent = 'Start Simulation';
+    DOM.startSimBtn.disabled = false;
+    DOM.stopSimBtn.disabled = true;
+    DOM.resetSimBtn.classList.add('hidden');
+    DOM.progressContainer.classList.add('hidden');
+    DOM.resultsContainer.classList.add('hidden');
+    redrawAllCharts();
+}
+
 function toggleConfigPanel() {
     const isVisible = !DOM.configPanel.classList.contains('hidden');
     DOM.configPanel.classList.toggle('hidden');
 
-    if(isVisible) { // it was visible, now it's hidden
+    if(isVisible) {
         DOM.mainGrid.classList.remove('lg:grid-cols-3');
         DOM.resultsPanel.classList.remove('lg:col-span-2');
         DOM.toggleConfigBtn.textContent = 'Show Config';
-    } else { // it was hidden, now it's visible
+    } else {
         DOM.mainGrid.classList.add('lg:grid-cols-3');
         DOM.resultsPanel.classList.add('lg:col-span-2');
         DOM.toggleConfigBtn.textContent = 'Hide Config';
@@ -177,7 +183,8 @@ function createBettingStrategyTable() {
     for (let i = 0; i <= 12; i++) {
         const stats = theoreticalStats[i];
         const row = document.createElement('tr');
-        row.className = 'border-b border-gray-700'; row.style.verticalAlign = 'middle';
+        row.className = 'border-b border-gray-700';
+        row.style.verticalAlign = 'middle';
         row.innerHTML = `
             <td class="px-4 py-2 font-medium">${i}</td>
             <td class="px-4 py-2"><select data-spread="${i}" class="strategy-type"><option value="min">Min Bet (Ante)</option><option value="ante"># of Antes</option><option value="pot">% of Pot</option></select></td>
@@ -346,13 +353,11 @@ function renderPlayerList() {
     });
 }
 
-// --- SIMULATION HANDLING ---
-
 function initWorker() {
     if (simulationWorker) {
         simulationWorker.terminate();
     }
-    simulationWorker = new Worker('worker.js');
+    simulationWorker = new Worker('./worker.js', { type: 'module' });
     simulationWorker.onmessage = handleWorkerMessage;
 }
 
@@ -360,79 +365,64 @@ function handleWorkerMessage(e) {
     const { type, data } = e.data;
     switch(type) {
         case 'ready':
-            theoreticalStats = data.theoreticalStats;
-            break;
-        case 'deckShuffled':
-            renderInitialDeck(data.deck);
+            if (!isPaused) {
+                theoreticalStats = data.theoreticalStats;
+            }
             break;
         case 'tick':
             currentLiveGamePotHistory.push(data.latestPot);
             Object.keys(data.playerPots).forEach(pId => {
-                if (!currentLivePlayerPotHistory[pId]) currentLivePlayerPotHistory[pId] = [];
+                if (!currentLivePlayerPotHistory[pId]) {
+                    currentLivePlayerPotHistory[pId] = [];
+                }
                 currentLivePlayerPotHistory[pId].push(data.playerPots[pId]);
             });
             currentLivePlayerBets = data.playerBets;
-
-            const { latestPot, playerPots, playerBets, deck, turnDetails, ...rest } = data;
+            const { latestPot, playerPots, playerBets, ...rest } = data;
             currentLiveGameData = rest;
-
-            if (deck) renderLiveDeck(deck);
-            if (turnDetails) renderLiveTurn(turnDetails);
-
-            redrawAllCharts();
             break;
         case 'gameComplete':
             allCompletedGamesData.push(data.finalStats);
             currentLiveGameData = null;
             currentLiveGamePotHistory = [];
             currentLivePlayerPotHistory = {};
-            currentLivePlayerBets = {};
             simulationTimings.push(data.finalStats.duration);
-            updateProgress(data);
-            redrawAllCharts();
-            if(DOM.liveTurnDisplay) DOM.liveTurnDisplay.innerHTML = '';
+            updateProgress(allCompletedGamesData.length / parseInt(DOM.simCountInput.value), allCompletedGamesData.length, parseInt(DOM.simCountInput.value));
             break;
         case 'complete':
             finalizeSimulation();
             break;
-        case 'paused': // Worker is paused due to halt checkbox
-             // No UI change needed here, handled by checkbox listener
-            break;
-        case 'readyForNextTurn': // Worker is halted and ready
-            DOM.nextTurnBtn.disabled = false;
-            break;
-         // 'resumed' message is no longer needed as checkbox handles resume
     }
+    redrawAllCharts();
 }
 
 function startSimulation() {
-     // --- Start new simulation ---
     if (players.length === 0) { alert('Please add at least one player.'); return; }
+
+    if (!isPaused) {
+        resetSimulation(); // Clear previous results for a fresh start
+    }
+    isPaused = false;
 
     if (DOM.configPanel.classList.contains('hidden') === false) {
          toggleConfigPanel();
     }
     DOM.toggleConfigBtnContainer.classList.remove('hidden');
-    DOM.startSimBtn.disabled = true; // Disable Start button
-    DOM.stopSimBtn.disabled = false; // Enable Stop button
-    DOM.stopSimBtn.classList.remove('hidden');
+    DOM.startSimBtn.textContent = 'Resume Simulation';
+    DOM.startSimBtn.disabled = true;
+    DOM.stopSimBtn.disabled = false;
+    DOM.resetSimBtn.classList.add('hidden');
     DOM.resultsContainer.classList.remove('hidden');
     DOM.progressContainer.classList.remove('hidden');
-    DOM.haltSimCheckbox.disabled = false; // Enable checkbox
-    isSimulationHalted = DOM.haltSimCheckbox.checked; // Get initial state
-    DOM.nextTurnBtnContainer.classList.toggle('hidden', !isSimulationHalted); // Show Next Turn if starting halted
 
+    const totalSims = parseInt(DOM.simCountInput.value);
+    const remainingSims = totalSims - allCompletedGamesData.length;
 
-    elementsToHideDuringSim.forEach(id => document.getElementById(id)?.classList.add('hidden'));
-
-    const showDeck = DOM.showLiveDeck.checked;
-    DOM.liveDeckDisplay.classList.toggle('hidden', !showDeck);
-    const showTurn = DOM.showLiveTurn.checked;
-    DOM.liveTurnDisplay.classList.toggle('hidden', !showTurn);
-
-    allCompletedGamesData = []; currentLiveGameData = null; simulationTimings.length = 0; theoreticalStats = null; currentLiveGamePotHistory = []; currentLivePlayerPotHistory = {}; currentLivePlayerBets = {};
-
-    updatePlayerColors();
+    if (remainingSims <= 0) {
+        alert("All simulations have already been completed.");
+        finalizeSimulation();
+        return;
+    }
 
     const toCents = val => Math.round(val * 100);
     const gameConfig = { ante: toCents(parseFloat(DOM.anteAmount.value)), startingPot: toCents(parseFloat(DOM.startingPot.value)), minTotalBets: parseInt(DOM.minTotalBets.value), minPotClearValue: toCents(parseFloat(DOM.minPotClearValue.value)) };
@@ -447,10 +437,11 @@ function startSimulation() {
     const config = {
         players: playersConfig,
         game: gameConfig,
-        simulationCount: parseInt(DOM.simCountInput.value),
-        showLiveDeck: showDeck,
-        showLiveTurn: showTurn,
-        shouldHaltInitially: isSimulationHalted // Pass initial halt state
+        simulationCount: remainingSims,
+        showLiveDeck: DOM.showLiveDeck.checked,
+        showLiveTurn: DOM.showLiveTurn.checked,
+        totalGames: totalSims, // Pass total for progress calculation
+        gamesOffset: allCompletedGamesData.length // Pass offset for game number
     };
 
     initWorker();
@@ -458,61 +449,61 @@ function startSimulation() {
     setupPlayerBetAmountCharts();
     setupPlayerPotHistoryCharts();
     simulationStartTime = performance.now();
-    updateProgress({progress: 0, gameNum: -1, totalGames: config.simulationCount});
+    updateProgress(allCompletedGamesData.length / totalSims, allCompletedGamesData.length, totalSims);
     startTimer();
     simulationWorker.postMessage({ type: 'start', config });
 }
 
-// Original stop behavior: terminate the worker
 function stopSimulation() {
     if (simulationWorker) {
         simulationWorker.terminate();
-        simulationWorker = null; // Worker is terminated
+        simulationWorker = null;
     }
-    finalizeSimulation();
+    isPaused = true;
+    clearInterval(simulationTimer);
+    DOM.startSimBtn.disabled = false;
+    DOM.stopSimBtn.disabled = true;
+    DOM.resetSimBtn.classList.remove('hidden');
+    DOM.progressText.textContent = "Paused";
 }
 
-
 function startTimer() {
-    const simulationCount = parseInt(DOM.simCountInput.value);
+    const totalSims = parseInt(DOM.simCountInput.value);
     clearInterval(simulationTimer);
     simulationTimer = setInterval(() => {
         const elapsedSeconds = Math.round((performance.now() - simulationStartTime) / 1000);
         DOM.elapsedTimeText.textContent = `Elapsed: ${elapsedSeconds}s`;
-         if (simulationTimings.length > 0) {
+        const completedCount = allCompletedGamesData.length;
+        if (simulationTimings.length > 0) {
             const avgTime = simulationTimings.reduce((a, b) => a + b, 0) / simulationTimings.length;
-            const etaSeconds = Math.round(avgTime * (simulationCount - allCompletedGamesData.length));
+            const etaSeconds = Math.round(avgTime * (totalSims - completedCount));
             DOM.etaText.textContent = `ETA: ${etaSeconds}s`;
-        } else if (allCompletedGamesData.length > 0) {
+        } else if (completedCount > 0) {
             const elapsed = (performance.now() - simulationStartTime) / 1000;
-            const timePerGame = elapsed / allCompletedGamesData.length;
-            const etaSeconds = Math.round(timePerGame * (simulationCount - allCompletedGamesData.length));
-             DOM.etaText.textContent = `ETA: ${etaSeconds}s`;
+            const timePerGame = elapsed / completedCount;
+            const etaSeconds = Math.round(timePerGame * (totalSims - completedCount));
+            DOM.etaText.textContent = `ETA: ${etaSeconds}s`;
         }
     }, 1000);
 }
 
 function finalizeSimulation() {
+    isPaused = false;
     clearInterval(simulationTimer);
+    DOM.startSimBtn.textContent = 'Start Simulation';
     DOM.startSimBtn.disabled = false;
     DOM.stopSimBtn.disabled = true;
-    DOM.stopSimBtn.classList.add('hidden');
-    DOM.haltSimCheckbox.checked = false;
-    DOM.haltSimCheckbox.disabled = true; // Disable checkbox until sim starts
-    isSimulationHalted = false;
-    DOM.nextTurnBtnContainer.classList.add('hidden');
-
+    DOM.resetSimBtn.classList.add('hidden');
     DOM.progressText.textContent = "Finished!";
     const elapsedSeconds = Math.round((performance.now() - simulationStartTime) / 1000);
     DOM.elapsedTimeText.textContent = `Total Time: ${elapsedSeconds}s`;
     DOM.etaText.textContent = `ETA: 0s`;
     elementsToHideDuringSim.forEach(id => document.getElementById(id)?.classList.remove('hidden'));
-    redrawAllCharts(); // Final redraw to show all stats
+    redrawAllCharts();
     DOM.liveDeckDisplay.classList.add('hidden');
 }
 
-function updateProgress(data) {
-    const { progress, gameNum, totalGames } = data;
+function updateProgress(progress, gameNum, totalGames) {
     const percentage = Math.round(progress * 100);
     DOM.progressBar.style.width = `${percentage}%`;
     DOM.progressPercentage.textContent = `${percentage}%`;
@@ -525,13 +516,12 @@ function redrawAllCharts() {
         return;
     }
 
-    const isSimulatingOrHalted = !DOM.stopSimBtn.classList.contains('hidden'); // True if running or halted
+    const isSimulating = !DOM.stopSimBtn.disabled;
 
     plotPotHistoryChart(allCompletedGamesData, currentLiveGameData);
     if(theoreticalStats) updateSpreadAnalysisTable();
 
-    // Show final stats only when completely finished (not just halted)
-    if (!isSimulatingOrHalted) {
+    if (!isSimulating) {
         elementsToHideDuringSim.forEach(id => document.getElementById(id)?.classList.remove('hidden'));
 
         plotHeatmap('game-length-heatmap', 'Game Length (# of Bets)', allCompletedGamesData.map(g => g.length), currentLiveGameData?.length);
@@ -549,7 +539,6 @@ function redrawAllCharts() {
         plotPlayerWinLossCharts();
         plotPlayerBetAmountCharts();
     } else {
-         // Hide detailed stats while running or halted
          elementsToHideDuringSim.forEach(id => document.getElementById(id)?.classList.add('hidden'));
     }
 }
