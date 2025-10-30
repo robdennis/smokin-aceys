@@ -130,18 +130,22 @@ function setupEventListeners() {
     DOM.cardCounting.addEventListener('change', (e) => {
         DOM.customRanksContainer.classList.toggle('hidden', e.target.value !== 'custom');
     });
-    DOM.startSimBtn.addEventListener('click', startSimulation); // Changed back
-    DOM.stopSimBtn.addEventListener('click', stopSimulation);   // Back to original stop
-    DOM.haltSimCheckbox.addEventListener('change', (e) => {     // Listener for checkbox
-         isSimulationHalted = e.target.checked;
-         if (simulationWorker) {
+    DOM.startSimBtn.addEventListener('click', startSimulation);
+    DOM.stopSimBtn.addEventListener('click', stopSimulation);
+    DOM.haltSimCheckbox.addEventListener('change', (e) => {
+        console.log(`[UI] Halt checkbox changed: ${e.target.checked}`);
+        isSimulationHalted = e.target.checked;
+        if (simulationWorker) {
             simulationWorker.postMessage({ type: 'halt', checked: isSimulationHalted });
-         }
-         DOM.nextTurnBtnContainer.classList.toggle('hidden', !isSimulationHalted);
+        }
+        DOM.nextTurnBtnContainer.classList.toggle('hidden', !isSimulationHalted);
     });
     DOM.nextTurnBtn.addEventListener('click', () => {
-        DOM.nextTurnBtn.disabled = true; // Disable until worker confirms ready
-        simulationWorker.postMessage({ type: 'nextTurn' });
+        console.log('[UI] Next Turn button clicked');
+        DOM.nextTurnBtn.disabled = true;
+        if (simulationWorker) {
+            simulationWorker.postMessage({ type: 'nextTurn' });
+        }
     });
     DOM.exportConfigBtn.addEventListener('click', exportConfig);
     DOM.importConfigBtn.addEventListener('click', () => DOM.importFileInput.click());
@@ -345,7 +349,9 @@ function renderPlayerList() {
 // --- SIMULATION HANDLING ---
 
 function initWorker() {
-    if (simulationWorker) simulationWorker.postMessage({type: 'terminate'});
+    if (simulationWorker) {
+        simulationWorker.terminate();
+    }
     simulationWorker = new Worker('worker.js');
     simulationWorker.onmessage = handleWorkerMessage;
 }
@@ -460,21 +466,10 @@ function startSimulation() {
 // Original stop behavior: terminate the worker
 function stopSimulation() {
     if (simulationWorker) {
-        simulationWorker.postMessage({ type: 'terminate' });
+        simulationWorker.terminate();
         simulationWorker = null; // Worker is terminated
     }
-     // Reset UI to initial state
-    clearInterval(simulationTimer);
-    DOM.startSimBtn.disabled = false;
-    DOM.stopSimBtn.disabled = true;
-    DOM.stopSimBtn.classList.add('hidden');
-    DOM.haltSimCheckbox.checked = false;
-    DOM.haltSimCheckbox.disabled = true; // Disable checkbox until sim starts
-    isSimulationHalted = false;
-    DOM.nextTurnBtnContainer.classList.add('hidden');
-    DOM.progressText.textContent = "Stopped by user.";
-     // Potentially keep charts visible, but clear live data indicators if desired
-     // redrawAllCharts(); // Might want to call redraw to update status
+    finalizeSimulation();
 }
 
 

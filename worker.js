@@ -17,59 +17,60 @@ class Deck {
 
 // --- SIMULATION LOGIC ---
 let simulationState = {};
-let shouldHalt = false; // Changed from isPaused
-let haltQueue = [];     // Changed from turnQueue
-let shouldTerminate = false; // Flag for complete stop
+let shouldHalt = false;
+let shouldTerminate = false;
+let haltResolver = null;
 
 self.onmessage = function(e) {
     const { type, config, checked } = e.data;
+    console.log(`[Worker] Received message: ${type}`, e.data);
+
     switch (type) {
         case 'start':
-            shouldHalt = config.shouldHaltInitially; // Pass initial state
-            haltQueue = [];
+            shouldHalt = config.shouldHaltInitially;
             shouldTerminate = false;
             runSimulation(config);
             break;
-        case 'halt': // Set halt flag
+        case 'halt':
+            console.log(`[Worker] Setting shouldHalt to ${checked}`);
             shouldHalt = checked;
-            if (!checked && haltQueue.length > 0) { // If unchecking and something is waiting
-                const resolver = haltQueue.shift();
-                resolver(); // Immediately resolve to resume auto-play
+            if (!checked && haltResolver) {
+                console.log('[Worker] Resuming simulation...');
+                haltResolver();
+                haltResolver = null;
             }
             break;
-        case 'nextTurn': // Advance one step if halted
-            if (haltQueue.length > 0) {
-                const resolver = haltQueue.shift();
-                resolver();
+        case 'nextTurn':
+            console.log('[Worker] Advancing to next turn...');
+            if (haltResolver) {
+                haltResolver();
+                haltResolver = null;
             }
             break;
-         case 'terminate': // Original stop behavior
+        case 'terminate':
+            console.log('[Worker] Terminating simulation...');
             shouldTerminate = true;
-            // If halted, resolve the promise to allow the loop to check terminate flag
-            if (haltQueue.length > 0) {
-                const resolver = haltQueue.shift();
-                resolver();
+            if (haltResolver) {
+                haltResolver();
+                haltResolver = null;
             }
             break;
     }
 };
 
-// This promise resolves either immediately (if not halting) or when nextTurn/resume is triggered
-function gameStep() {
-    console.log("gameStep")
-    return new Promise(resolve => {
-        if (shouldHalt) {
-            haltQueue.push(resolve); // Queue the resolver
-            self.postMessage({ type: 'readyForNextTurn' }); // Notify UI
-        } else {
-            // Yield to the event loop but resolve automatically
-            setTimeout(resolve, 0);
-        }
-    });
+async function pauseIfHalted() {
+    if (shouldHalt) {
+        console.log('[Worker] Simulation halted. Awaiting nextTurn or resume...');
+        self.postMessage({ type: 'readyForNextTurn' });
+        await new Promise(resolve => {
+            haltResolver = resolve;
+        });
+        console.log('[Worker] Resumed from halt.');
+    }
 }
 
 function runSimulation(config) {
-    const { players: playerConfigs, game: gameConfig, simulationCount, showLiveDeck, showLiveTurn } = config;
+    const { players: playerConfigs, game: gameConfig, simulationCount } = config;
     simulationState.config = config;
     simulationState.currentGameIndex = 0;
 
@@ -81,10 +82,9 @@ function runSimulation(config) {
 
 async function gameLoop() {
     for (let i = simulationState.currentGameIndex; i < simulationState.config.simulationCount; i++) {
-         if (shouldTerminate) break; // Check for termination at the start of each game
+        if (shouldTerminate) break;
 
         simulationState.currentGameIndex = i;
-
         const startTime = performance.now();
         const deck = new Deck();
         if (simulationState.config.showLiveDeck) {
@@ -92,15 +92,22 @@ async function gameLoop() {
         }
         let pot = simulationState.config.game.startingPot;
 
-        let playersAsJson = JSON.stringify(simulationState.config.players, (k,v) => v === Infinity ? "Infinity" : v);
+        let playersAsJson = JSON.stringify(simulationState.config.players, (k, v) => v === Infinity ? "Infinity" : v);
         let playersConfigForGame = JSON.parse(playersAsJson, (k, v) => v === "Infinity" ? Infinity : v);
-        let players = playersConfigForGame.map(p => ({ ...p, money: p.startMoney, isActive: true, buyInUsed: 0, rebuyAmountUsed: 0}));
+        let players = playersConfigForGame.map(p => ({ ...p, money: p.startMoney, isActive: true, buyInUsed: 0, rebuyAmountUsed: 0 }));
 
         let playerContributions = players.reduce((acc, p) => ({ ...acc, [p.id]: 0 }), {});
 
         let currentGameStats = {
-            gameNum: i + 1, potHistory: [], playerPotHistory: {}, spreads: {}, playerBets: {},
-            length: 0, shuffles: 0, antesMade: 0, playersGaveUp: 0,
+            gameNum: i + 1,
+            potHistory: [],
+            playerPotHistory: {},
+            spreads: {},
+            playerBets: {},
+            length: 0,
+            shuffles: 0,
+            antesMade: 0,
+            playersGaveUp: 0,
             playerFinalFinancials: {},
             aggregatedContextualOccurrences: Array(13).fill(0),
             totalHandsForContextual: 0
@@ -111,20 +118,18 @@ async function gameLoop() {
         });
 
         function handleRebuyIfNeeded(player, amountNeeded, gameLog) {
-             while (player.money < amountNeeded) {
+            while (player.money < amountNeeded) {
                 if (!player.rebuy || player.rebuy.strategy === 'none' || (player.rebuy.count !== Infinity && player.buyInUsed >= player.rebuy.count)) {
                     break;
                 }
-
                 let rebuyAmount = player.rebuy.strategy === 'cover_bet' ? amountNeeded - player.money : player.rebuy.amount;
-                if (rebuyAmount <= 0) rebuyAmount = player.rebuy.amount; // Fallback for cover_bet if money is negative
-
+                if (rebuyAmount <= 0) rebuyAmount = player.rebuy.amount;
                 player.money += rebuyAmount;
                 player.rebuyAmountUsed += rebuyAmount;
                 if (player.rebuy.count !== Infinity) {
                     player.buyInUsed++;
                 }
-                gameLog.push({type: 'rebuy', playerName: player.name, amount: rebuyAmount, remaining: player.rebuy.count !== Infinity ? player.rebuy.count - player.buyInUsed : 'Unlimited'});
+                gameLog.push({ type: 'rebuy', playerName: player.name, amount: rebuyAmount, remaining: player.rebuy.count !== Infinity ? player.rebuy.count - player.buyInUsed : 'Unlimited' });
             }
         }
 
@@ -138,17 +143,19 @@ async function gameLoop() {
                     pot += simulationState.config.game.ante;
                     playerContributions[player.id] += simulationState.config.game.ante;
                 } else {
-                    if(player.isActive) { player.isActive = false; currentGameStats.playersGaveUp++; }
+                    if (player.isActive) {
+                        player.isActive = false;
+                        currentGameStats.playersGaveUp++;
+                    }
                 }
             });
             currentGameStats.antesMade++;
             return players.some(p => p.isActive);
         }
 
-
         let gameLogForTurn = [];
         if (!anteUp(gameLogForTurn)) {
-            // end game if no one can ante
+            // No one can ante, end game
         }
 
         let currentPlayerIndex = -1;
@@ -156,13 +163,17 @@ async function gameLoop() {
         let consecutiveZeroBets = 0;
 
         while (gameRunning) {
-             if (shouldTerminate) { gameRunning = false; break; } // Check termination within the game loop
+            await pauseIfHalted();
+            if (shouldTerminate) {
+                gameRunning = false;
+                break;
+            }
 
             currentPlayerIndex = (currentPlayerIndex + 1) % players.length;
             let currentPlayer = players[currentPlayerIndex];
 
             if (!currentPlayer.isActive) {
-                if (players.every(p => !p.isActive)) { gameRunning = false; break; }
+                if (players.every(p => !p.isActive)) gameRunning = false;
                 continue;
             }
 
@@ -185,65 +196,47 @@ async function gameLoop() {
             const userSpread = spread + 1;
 
             const betDecision = getPlayerBet(currentPlayer, spread, pot, simulationState.config.game.ante, deck);
-            const betAmount = Math.max(betDecision.bet, 0); // Allow zero bets
+            const betAmount = Math.max(betDecision.bet, 0);
 
-            let turnDetails = null;
-
-            // --- First part of the turn (before result) ---
-            turnDetails = {
+            let turnDetails = {
                 playerName: currentPlayer.name,
                 card1, card2, spread, betAmount,
                 card3: null, outcome: 'pending',
                 log: gameLogForTurn,
                 playerMoneyBefore: currentPlayer.money
             };
-            let tickData = { ...currentGameStats, latestPot: pot, spreads: currentGameStats.spreads, playerPots: playerContributions, playerBets: currentGameStats.playerBets };
-            delete tickData.potHistory;
-            delete tickData.playerPotHistory;
-            if (simulationState.config.showLiveDeck) tickData.deck = deck.cards;
-            if (simulationState.config.showLiveTurn) tickData.turnDetails = turnDetails;
-            self.postMessage({ type: 'tick', data: tickData });
-            gameLogForTurn = []; // Reset log for next turn
 
-            await gameStep();
-
-            // --- Second part of the turn (after result) ---
             if (betAmount > 0) {
                 consecutiveZeroBets = 0;
             } else {
                 consecutiveZeroBets++;
             }
 
-            if (consecutiveZeroBets > players.length * 5) { // Game stall detection
+            if (consecutiveZeroBets > players.length * 5) {
                 gameRunning = false;
             }
 
-            if(gameRunning) {
+            if (gameRunning) {
                 currentGameStats.length++;
-
                 handleRebuyIfNeeded(currentPlayer, betAmount, gameLogForTurn);
 
                 if (betAmount > 0 && currentPlayer.money >= betAmount) {
                     currentGameStats.playerBets[currentPlayer.id].push(betAmount);
                     currentPlayer.money -= betAmount;
-
                     const contextualOutcomes = calculateContextualOutcomes(deck);
                     const [card3] = deck.draw(1);
                     turnDetails.card3 = card3;
-
                     let outcome;
                     if (card3.rank === highRank || card3.rank === lowRank) {
                         outcome = 'dloss';
                         pot += betAmount * 2;
                         playerContributions[currentPlayer.id] += betAmount * 2;
-                    }
-                    else if (card3.rank > lowRank && card3.rank < highRank) {
+                    } else if (card3.rank > lowRank && card3.rank < highRank) {
                         outcome = 'win';
                         const winnings = betAmount;
                         pot -= winnings;
                         currentPlayer.money += betAmount + winnings;
                         playerContributions[currentPlayer.id] -= winnings;
-
                         if (!currentGameStats.spreads[userSpread]) currentGameStats.spreads[userSpread] = {};
                         currentGameStats.spreads[userSpread].maxWin = Math.max(currentGameStats.spreads[userSpread].maxWin || 0, winnings / simulationState.config.game.ante);
                     } else {
@@ -251,25 +244,22 @@ async function gameLoop() {
                         pot += betAmount;
                         playerContributions[currentPlayer.id] += betAmount;
                     }
-
                     turnDetails.outcome = outcome;
-
-                    if (!currentGameStats.spreads[userSpread]) currentGameStats.spreads[userSpread] = { occurrences: 0, wins: 0, losses: 0, dlosses: 0, sumEVContextual: 0, sumCtxWin:0, sumCtxLoss:0, sumCtxDloss:0 };
+                    if (!currentGameStats.spreads[userSpread]) currentGameStats.spreads[userSpread] = { occurrences: 0, wins: 0, losses: 0, dlosses: 0, sumEVContextual: 0, sumCtxWin: 0, sumCtxLoss: 0, sumCtxDloss: 0 };
                     const s = currentGameStats.spreads[userSpread];
                     s.occurrences++;
                     s[outcome + 'es'] = (s[outcome + 'es'] || 0) + 1;
                     s.sumCtxWin += contextualOutcomes.win;
                     s.sumCtxLoss += contextualOutcomes.loss;
                     s.sumCtxDloss += contextualOutcomes.dloss;
-
                     const ev_contextual = calculateEVsForBet(betAmount, spread, deck, deck.cards).observed;
                     s.sumEVContextual += ev_contextual;
                 } else {
-                    if (betAmount > 0) { // Player was supposed to bet but couldn't cover it
+                    if (betAmount > 0) {
                         currentPlayer.isActive = false;
                         currentGameStats.playersGaveUp++;
                         turnDetails.outcome = 'quit';
-                    } else { // A bet of 0 is a legal pass
+                    } else {
                         turnDetails.outcome = 'pass';
                     }
                 }
@@ -278,15 +268,15 @@ async function gameLoop() {
                 players.forEach(p => currentGameStats.playerPotHistory[p.id].push(playerContributions[p.id]));
 
                 if (currentPlayer.stopLoss !== null && (currentPlayer.startMoney + currentPlayer.rebuyAmountUsed - currentPlayer.money) > currentPlayer.stopLoss && currentPlayer.isActive) {
-                    gameLogForTurn.push({type: 'stoploss', playerName: currentPlayer.name, threshold: currentPlayer.stopLoss});
-                    currentGameStats.playersGaveUp++; currentPlayer.isActive = false;
+                    gameLogForTurn.push({ type: 'stoploss', playerName: currentPlayer.name, threshold: currentPlayer.stopLoss });
+                    currentGameStats.playersGaveUp++;
+                    currentPlayer.isActive = false;
                 }
-
 
                 if (pot <= 0) {
                     if (currentGameStats.length >= simulationState.config.game.minTotalBets || Math.abs(pot) >= simulationState.config.game.minPotClearValue) gameRunning = false;
                     else {
-                        if(!anteUp(gameLogForTurn)) gameRunning = false;
+                        if (!anteUp(gameLogForTurn)) gameRunning = false;
                         playerContributions = players.reduce((acc, p) => ({ ...acc, [p.id]: 0 }), {});
                         players.forEach(p => currentGameStats.playerPotHistory[p.id] = []);
                     }
@@ -294,37 +284,36 @@ async function gameLoop() {
 
                 if (players.every(p => !p.isActive)) gameRunning = false;
 
-                // Update tick data after resolving the bet
-                tickData = { ...currentGameStats, latestPot: pot, spreads: currentGameStats.spreads, playerPots: playerContributions, playerBets: currentGameStats.playerBets };
+                let tickData = { ...currentGameStats, latestPot: pot, spreads: currentGameStats.spreads, playerPots: playerContributions, playerBets: currentGameStats.playerBets };
                 delete tickData.potHistory;
                 delete tickData.playerPotHistory;
                 if (simulationState.config.showLiveDeck) tickData.deck = deck.cards;
-                if (simulationState.config.showLiveTurn) tickData.turnDetails = turnDetails; // Now includes outcome and card3
+                if (simulationState.config.showLiveTurn) {
+                    tickData.turnDetails = turnDetails;
+                }
                 self.postMessage({ type: 'tick', data: tickData });
-
-                // --- Halt Check Point ---
-                // Await here, after the turn is fully resolved and UI updated
-                await gameStep();
+                gameLogForTurn = [];
             }
-        } // End while(gameRunning)
+            // Force a yield to the event loop to allow messages to be processed.
+            await new Promise(resolve => setTimeout(resolve, 1));
+        }
 
-        if (shouldTerminate) break; // Check again after a game finishes
+        if (shouldTerminate) break;
 
         currentGameStats.duration = (performance.now() - startTime) / 1000;
         players.forEach(p => {
             currentGameStats.playerFinalFinancials[p.id] = { finalMoney: p.money, rebuyAmountUsed: p.rebuyAmountUsed, startMoney: p.startMoney };
         });
 
-        self.postMessage({ type: 'gameComplete', data: { finalStats: currentGameStats, progress: (i + 1) / simulationState.config.simulationCount, gameNum: i + 1, totalGames: simulationState.config.simulationCount }});
-    } // End for loop (games)
+        self.postMessage({ type: 'gameComplete', data: { finalStats: currentGameStats, progress: (i + 1) / simulationState.config.simulationCount, gameNum: i + 1, totalGames: simulationState.config.simulationCount } });
+    }
 
-    if (!shouldTerminate) { // Only send complete if not terminated early
+    if (!shouldTerminate) {
         self.postMessage({ type: 'complete' });
     } else {
-         self.close(); // Close worker if terminated
+        self.close();
     }
 }
-
 
 function getPlayerBet(player, spread, pot, ante, deck) {
     const strategy = player.bettingStrategy[spread + 1];
