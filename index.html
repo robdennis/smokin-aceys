@@ -164,11 +164,17 @@
                             <button id="start-simulation-btn" class="btn btn-primary w-full">Start Simulation</button>
                         </div>
                         <div class="w-full md:w-auto pt-0 md:pt-7">
-                             <button id="stop-simulation-btn" class="btn btn-danger w-full hidden">Stop Simulation</button>
+                             <button id="stop-simulation-btn" class="btn btn-danger w-full" disabled>Stop Simulation</button>
                         </div>
-                         <div id="next-turn-btn-container" class="w-full md:w-auto pt-0 md:pt-7 hidden">
-                             <button id="next-turn-btn" class="btn btn-secondary w-full">Next Turn</button>
-                         </div>
+                        <div class="w-full md:w-auto pt-0 md:pt-7">
+                            <label class="flex items-center">
+                               <input type="checkbox" id="halt-simulation-checkbox" class="w-auto mr-2">
+                               Halt Simulation
+                           </label>
+                       </div>
+                        <div id="next-turn-btn-container" class="w-full md:w-auto pt-0 md:pt-7 hidden">
+                           <button id="next-turn-btn" class="btn btn-secondary w-full">Next Turn</button>
+                        </div>
                         <div id="toggle-config-btn-container" class="w-full md:w-auto pt-0 md:pt-7 hidden">
                             <button id="toggle-config-btn" class="btn btn-secondary w-full">Show Config</button>
                         </div>
@@ -382,50 +388,52 @@
 
         // --- SIMULATION LOGIC ---
         let simulationState = {};
-        let isPaused = false;
-        let turnQueue = [];
+        let shouldHalt = false; // Changed from isPaused
+        let haltQueue = [];     // Changed from turnQueue
+        let shouldTerminate = false; // Flag for complete stop
 
         self.onmessage = function(e) {
-            const { type, config } = e.data;
+            const { type, config, checked } = e.data;
             switch (type) {
                 case 'start':
-                    isPaused = false;
-                    turnQueue = [];
+                    shouldHalt = config.shouldHaltInitially; // Pass initial state
+                    haltQueue = [];
+                    shouldTerminate = false;
                     runSimulation(config);
                     break;
-                case 'stop': // This now means pause
-                    isPaused = true;
-                    self.postMessage({ type: 'paused' });
+                case 'halt': // Set halt flag
+                    shouldHalt = checked;
+                    if (!checked && haltQueue.length > 0) { // If unchecking and something is waiting
+                        const resolver = haltQueue.shift();
+                        resolver(); // Immediately resolve to resume auto-play
+                    }
                     break;
-                case 'resume':
-                    isPaused = false;
-                    self.postMessage({ type: 'resumed' });
-                    // Unblock the gameLoop by resolving the current pending step
-                    if (turnQueue.length > 0) {
-                        const resolver = turnQueue.shift();
+                case 'nextTurn': // Advance one step if halted
+                    if (haltQueue.length > 0) {
+                        const resolver = haltQueue.shift();
                         resolver();
                     }
                     break;
-                case 'nextTurn':
-                    if (turnQueue.length > 0) {
-                        const resolver = turnQueue.shift();
-                        resolver(); // This will resolve the promise inside gameStep
+                 case 'terminate': // Original stop behavior
+                    shouldTerminate = true;
+                    // If halted, resolve the promise to allow the loop to check terminate flag
+                    if (haltQueue.length > 0) {
+                        const resolver = haltQueue.shift();
+                        resolver();
                     }
-                    break;
-                 case 'terminate':
-                    isPaused = true; // Effectively stops the simulation
-                    self.close();
                     break;
             }
         };
 
+        // This promise resolves either immediately (if not halting) or when nextTurn/resume is triggered
         function gameStep() {
+            console.log("gameStep")
             return new Promise(resolve => {
-                if (isPaused) {
-                    turnQueue.push(resolve);
-                    self.postMessage({ type: 'readyForNextTurn' });
+                if (shouldHalt) {
+                    haltQueue.push(resolve); // Queue the resolver
+                    self.postMessage({ type: 'readyForNextTurn' }); // Notify UI
                 } else {
-                    // Yield to the event loop to allow other messages (like 'stop') to be processed.
+                    // Yield to the event loop but resolve automatically
                     setTimeout(resolve, 0);
                 }
             });
@@ -444,6 +452,7 @@
 
         async function gameLoop() {
             for (let i = simulationState.currentGameIndex; i < simulationState.config.simulationCount; i++) {
+                 if (shouldTerminate) break; // Check for termination at the start of each game
 
                 simulationState.currentGameIndex = i;
 
@@ -454,7 +463,6 @@
                 }
                 let pot = simulationState.config.game.startingPot;
 
-                // Correctly deep-copy players for the new game, preserving Infinity
                 let playersAsJson = JSON.stringify(simulationState.config.players, (k,v) => v === Infinity ? "Infinity" : v);
                 let playersConfigForGame = JSON.parse(playersAsJson, (k, v) => v === "Infinity" ? Infinity : v);
                 let players = playersConfigForGame.map(p => ({ ...p, money: p.startMoney, isActive: true, buyInUsed: 0, rebuyAmountUsed: 0}));
@@ -519,6 +527,7 @@
                 let consecutiveZeroBets = 0;
 
                 while (gameRunning) {
+                     if (shouldTerminate) { gameRunning = false; break; } // Check termination within the game loop
 
                     currentPlayerIndex = (currentPlayerIndex + 1) % players.length;
                     let currentPlayer = players[currentPlayerIndex];
@@ -551,8 +560,7 @@
 
                     let turnDetails = null;
 
-                    await gameStep();
-                    // This part happens right before the bet result is known
+                    // --- First part of the turn (before result) ---
                     turnDetails = {
                         playerName: currentPlayer.name,
                         card1, card2, spread, betAmount,
@@ -560,15 +568,17 @@
                         log: gameLogForTurn,
                         playerMoneyBefore: currentPlayer.money
                     };
-                    const { spreads, potHistory, playerPotHistory, ...restOfStats } = currentGameStats;
-                    const tickData = { ...restOfStats, latestPot: pot, spreads, playerPots: playerContributions, playerBets: currentGameStats.playerBets };
+                    let tickData = { ...currentGameStats, latestPot: pot, spreads: currentGameStats.spreads, playerPots: playerContributions, playerBets: currentGameStats.playerBets };
+                    delete tickData.potHistory;
+                    delete tickData.playerPotHistory;
                     if (simulationState.config.showLiveDeck) tickData.deck = deck.cards;
                     if (simulationState.config.showLiveTurn) tickData.turnDetails = turnDetails;
                     self.postMessage({ type: 'tick', data: tickData });
                     gameLogForTurn = []; // Reset log for next turn
 
                     await gameStep();
-                    // This part happens right after the bet result is known
+
+                    // --- Second part of the turn (after result) ---
                     if (betAmount > 0) {
                         consecutiveZeroBets = 0;
                     } else {
@@ -655,13 +665,21 @@
 
                         if (players.every(p => !p.isActive)) gameRunning = false;
 
-                        const { spreads: finalSpreads, potHistory: finalPotHistory, playerPotHistory: finalPlayerPotHistory, ...finalRestOfStats } = currentGameStats;
-                        const finalTickData = { ...finalRestOfStats, latestPot: pot, spreads: finalSpreads, playerPots: playerContributions, playerBets: currentGameStats.playerBets };
-                        if (simulationState.config.showLiveDeck) finalTickData.deck = deck.cards;
-                        if (simulationState.config.showLiveTurn) finalTickData.turnDetails = turnDetails;
-                        self.postMessage({ type: 'tick', data: finalTickData });
+                        // Update tick data after resolving the bet
+                        tickData = { ...currentGameStats, latestPot: pot, spreads: currentGameStats.spreads, playerPots: playerContributions, playerBets: currentGameStats.playerBets };
+                        delete tickData.potHistory;
+                        delete tickData.playerPotHistory;
+                        if (simulationState.config.showLiveDeck) tickData.deck = deck.cards;
+                        if (simulationState.config.showLiveTurn) tickData.turnDetails = turnDetails; // Now includes outcome and card3
+                        self.postMessage({ type: 'tick', data: tickData });
+
+                        // --- Halt Check Point ---
+                        // Await here, after the turn is fully resolved and UI updated
+                        await gameStep();
                     }
-                }
+                } // End while(gameRunning)
+
+                if (shouldTerminate) break; // Check again after a game finishes
 
                 currentGameStats.duration = (performance.now() - startTime) / 1000;
                 players.forEach(p => {
@@ -669,9 +687,15 @@
                 });
 
                 self.postMessage({ type: 'gameComplete', data: { finalStats: currentGameStats, progress: (i + 1) / simulationState.config.simulationCount, gameNum: i + 1, totalGames: simulationState.config.simulationCount }});
+            } // End for loop (games)
+
+            if (!shouldTerminate) { // Only send complete if not terminated early
+                self.postMessage({ type: 'complete' });
+            } else {
+                 self.close(); // Close worker if terminated
             }
-            self.postMessage({ type: 'complete' });
         }
+
 
         function getPlayerBet(player, spread, pot, ante, deck) {
             const strategy = player.bettingStrategy[spread + 1];
@@ -790,7 +814,7 @@
         let simulationTimer = null;
         let simulationStartTime = 0;
         const simulationTimings = [];
-        let isSimulationPaused = false;
+        let isSimulationHalted = false; // State for the checkbox
 
         let allCompletedGamesData = [];
         let currentLiveGameData = null;
@@ -849,6 +873,7 @@
             bettingStrategyTable: document.getElementById('betting-strategy-table'),
             startSimBtn: document.getElementById('start-simulation-btn'),
             stopSimBtn: document.getElementById('stop-simulation-btn'),
+            haltSimCheckbox: document.getElementById('halt-simulation-checkbox'), // New checkbox
             nextTurnBtn: document.getElementById('next-turn-btn'),
             nextTurnBtnContainer: document.getElementById('next-turn-btn-container'),
             simCountInput: document.getElementById('simulation-count'),
@@ -915,11 +940,18 @@
             DOM.cardCounting.addEventListener('change', (e) => {
                 DOM.customRanksContainer.classList.toggle('hidden', e.target.value !== 'custom');
             });
-            DOM.startSimBtn.addEventListener('click', startOrResumeSimulation);
-            DOM.stopSimBtn.addEventListener('click', stopSimulation);
+            DOM.startSimBtn.addEventListener('click', startSimulation); // Changed back
+            DOM.stopSimBtn.addEventListener('click', stopSimulation);   // Back to original stop
+            DOM.haltSimCheckbox.addEventListener('change', (e) => {     // Listener for checkbox
+                 isSimulationHalted = e.target.checked;
+                 if (simulationWorker) {
+                    simulationWorker.postMessage({ type: 'halt', checked: isSimulationHalted });
+                 }
+                 DOM.nextTurnBtnContainer.classList.toggle('hidden', !isSimulationHalted);
+            });
             DOM.nextTurnBtn.addEventListener('click', () => {
-                DOM.nextTurnBtn.disabled = true;
-                simulationWorker.postMessage({ type: 'nextTurn' })
+                DOM.nextTurnBtn.disabled = true; // Disable until worker confirms ready
+                simulationWorker.postMessage({ type: 'nextTurn' });
             });
             DOM.exportConfigBtn.addEventListener('click', exportConfig);
             DOM.importConfigBtn.addEventListener('click', () => DOM.importFileInput.click());
@@ -1169,52 +1201,33 @@
                 case 'complete':
                     finalizeSimulation();
                     break;
-                case 'paused':
-                    isSimulationPaused = true;
-                    DOM.stopSimBtn.classList.add('hidden');
-                    DOM.startSimBtn.textContent = 'Resume Simulation';
-                    DOM.startSimBtn.disabled = false;
-                    DOM.startSimBtn.classList.remove('hidden');
-                    DOM.nextTurnBtnContainer.classList.remove('hidden');
-                    DOM.nextTurnBtn.disabled = false;
-                    clearInterval(simulationTimer);
+                case 'paused': // Worker is paused due to halt checkbox
+                     // No UI change needed here, handled by checkbox listener
                     break;
-                case 'resumed':
-                    isSimulationPaused = false;
-                    DOM.stopSimBtn.disabled = false;
-                    DOM.stopSimBtn.classList.remove('hidden');
-                    DOM.startSimBtn.classList.add('hidden');
-                    DOM.nextTurnBtnContainer.classList.add('hidden');
-                    startTimer();
-                    break;
-                case 'readyForNextTurn':
+                case 'readyForNextTurn': // Worker is halted and ready
                     DOM.nextTurnBtn.disabled = false;
                     break;
+                 // 'resumed' message is no longer needed as checkbox handles resume
             }
         }
 
-        function startOrResumeSimulation() {
-            if (isSimulationPaused) {
-                if (simulationWorker) {
-                    simulationWorker.postMessage({ type: 'resume' });
-                }
-                return;
-            }
-
-            // --- Start new simulation ---
+        function startSimulation() {
+             // --- Start new simulation ---
             if (players.length === 0) { alert('Please add at least one player.'); return; }
 
             if (DOM.configPanel.classList.contains('hidden') === false) {
                  toggleConfigPanel();
             }
             DOM.toggleConfigBtnContainer.classList.remove('hidden');
-            DOM.startSimBtn.classList.add('hidden');
-            DOM.stopSimBtn.disabled = false;
+            DOM.startSimBtn.disabled = true; // Disable Start button
+            DOM.stopSimBtn.disabled = false; // Enable Stop button
             DOM.stopSimBtn.classList.remove('hidden');
             DOM.resultsContainer.classList.remove('hidden');
             DOM.progressContainer.classList.remove('hidden');
-            isSimulationPaused = false;
-            DOM.nextTurnBtnContainer.classList.add('hidden');
+            DOM.haltSimCheckbox.disabled = false; // Enable checkbox
+            isSimulationHalted = DOM.haltSimCheckbox.checked; // Get initial state
+            DOM.nextTurnBtnContainer.classList.toggle('hidden', !isSimulationHalted); // Show Next Turn if starting halted
+
 
             elementsToHideDuringSim.forEach(id => document.getElementById(id)?.classList.add('hidden'));
 
@@ -1237,7 +1250,14 @@
                 return p;
             });
 
-            const config = { players: playersConfig, game: gameConfig, simulationCount: parseInt(DOM.simCountInput.value), showLiveDeck: showDeck, showLiveTurn: showTurn };
+            const config = {
+                players: playersConfig,
+                game: gameConfig,
+                simulationCount: parseInt(DOM.simCountInput.value),
+                showLiveDeck: showDeck,
+                showLiveTurn: showTurn,
+                shouldHaltInitially: isSimulationHalted // Pass initial halt state
+            };
 
             initWorker();
             setupPlayerWinLossCharts();
@@ -1249,11 +1269,26 @@
             simulationWorker.postMessage({ type: 'start', config });
         }
 
+        // Original stop behavior: terminate the worker
         function stopSimulation() {
             if (simulationWorker) {
-                simulationWorker.postMessage({ type: 'stop' });
+                simulationWorker.postMessage({ type: 'terminate' });
+                simulationWorker = null; // Worker is terminated
             }
+             // Reset UI to initial state
+            clearInterval(simulationTimer);
+            DOM.startSimBtn.disabled = false;
+            DOM.stopSimBtn.disabled = true;
+            DOM.stopSimBtn.classList.add('hidden');
+            DOM.haltSimCheckbox.checked = false;
+            DOM.haltSimCheckbox.disabled = true; // Disable checkbox until sim starts
+            isSimulationHalted = false;
+            DOM.nextTurnBtnContainer.classList.add('hidden');
+            DOM.progressText.textContent = "Stopped by user.";
+             // Potentially keep charts visible, but clear live data indicators if desired
+             // redrawAllCharts(); // Might want to call redraw to update status
         }
+
 
         function startTimer() {
             const simulationCount = parseInt(DOM.simCountInput.value);
@@ -1277,12 +1312,12 @@
         function finalizeSimulation() {
             clearInterval(simulationTimer);
             DOM.startSimBtn.disabled = false;
-            DOM.startSimBtn.classList.remove('hidden');
-            DOM.startSimBtn.textContent = 'Start Simulation';
             DOM.stopSimBtn.disabled = true;
             DOM.stopSimBtn.classList.add('hidden');
+            DOM.haltSimCheckbox.checked = false;
+            DOM.haltSimCheckbox.disabled = true; // Disable checkbox until sim starts
+            isSimulationHalted = false;
             DOM.nextTurnBtnContainer.classList.add('hidden');
-            isSimulationPaused = false;
 
             DOM.progressText.textContent = "Finished!";
             const elapsedSeconds = Math.round((performance.now() - simulationStartTime) / 1000);
@@ -1307,12 +1342,15 @@
                 return;
             }
 
-            const isSimulating = !DOM.stopSimBtn.classList.contains('hidden') && !isSimulationPaused;
+            const isSimulatingOrHalted = !DOM.stopSimBtn.classList.contains('hidden'); // True if running or halted
 
             plotPotHistoryChart(allCompletedGamesData, currentLiveGameData);
             if(theoreticalStats) updateSpreadAnalysisTable();
 
-            if (!isSimulating) {
+            // Show final stats only when completely finished (not just halted)
+            if (!isSimulatingOrHalted) {
+                elementsToHideDuringSim.forEach(id => document.getElementById(id)?.classList.remove('hidden'));
+
                 plotHeatmap('game-length-heatmap', 'Game Length (# of Bets)', allCompletedGamesData.map(g => g.length), currentLiveGameData?.length);
                 plotHeatmap('antes-made-heatmap', '# of Antes Made', allCompletedGamesData.map(g => g.antesMade), currentLiveGameData?.antesMade);
                 plotHeatmap('shuffles-heatmap', '# of Shuffles per Game', allCompletedGamesData.map(g => g.shuffles), currentLiveGameData?.shuffles);
@@ -1327,6 +1365,9 @@
                 plotPlayerPotHistoryCharts();
                 plotPlayerWinLossCharts();
                 plotPlayerBetAmountCharts();
+            } else {
+                 // Hide detailed stats while running or halted
+                 elementsToHideDuringSim.forEach(id => document.getElementById(id)?.classList.add('hidden'));
             }
         }
 
