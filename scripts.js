@@ -210,7 +210,7 @@ function addDefaultPlayers(){
             "id": "player-1759696538976",
             "name": "Nathan",
             "startMoney": 20,
-            "stopLoss": 50,
+            "stopLoss": null,
             "rebuy": { "strategy": "cover_bet", "amount": 50, "count": Infinity },
             "cardCounting": "none", "customRanks": [],
             "bettingStrategy": [
@@ -225,7 +225,7 @@ function addDefaultPlayers(){
             "id": "player-1759696864616",
             "name": "Rob",
             "startMoney": 20,
-            "stopLoss": 50,
+            "stopLoss": null,
             "rebuy": { "strategy": "cover_bet", "amount": 50, "count": Infinity },
             "cardCounting": "none", "customRanks": [],
             "bettingStrategy": [
