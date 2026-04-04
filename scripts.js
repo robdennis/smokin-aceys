@@ -818,10 +818,18 @@ function plotPlayerWinLossCharts() {
     players.forEach(player => {
         const playerData = allCompletedGamesData.map(game => {
             const financial = game.playerFinalFinancials[player.id];
-            if (!financial) return 0;
-            return (financial.finalMoney - financial.startMoney - financial.rebuyAmountUsed) / 100;
-        });
-        plotHeatmap(`player-win-loss-${player.id}`, `${player.name}: Win/Loss ($)`, playerData, null, '$');
+            if (!financial) return null;
+            const winLoss = (financial.finalMoney - financial.startMoney - financial.rebuyAmountUsed) / 100;
+            return [game.length, winLoss];
+        }).filter(Boolean);
+
+        const winLossAmounts = playerData.map(d => d[1]);
+        const totalWinLoss = winLossAmounts.reduce((a, b) => a + b, 0);
+        const avgWinLoss = winLossAmounts.length > 0 ? totalWinLoss / winLossAmounts.length : 0;
+
+        const title = `${player.name}: Win/Loss vs. Game Length<br>Total: $${totalWinLoss.toFixed(2)} | Avg: $${avgWinLoss.toFixed(2)}`;
+
+        plotPlayerHeatmap2D(`player-win-loss-${player.id}`, title, playerData, 'Game Length (# of Bets)', 'Win/Loss ($)', '$');
     });
 }
 
@@ -837,12 +845,12 @@ function setupPlayerBetAmountCharts() {
 
 function plotPlayerBetAmountCharts() {
     players.forEach(player => {
-        const allBets = allCompletedGamesData.flatMap(g => g.playerBets[player.id] || []).map(b => b/100);
-        let liveBet = null;
-        if(currentLivePlayerBets[player.id] && currentLivePlayerBets[player.id].length > 0){
-            liveBet = currentLivePlayerBets[player.id].slice(-1)[0] / 100;
-        }
-        plotHeatmap(`player-bet-amount-${player.id}`, `${player.name}: Bet Amounts ($)`, allBets, liveBet, '$');
+        const allBets = allCompletedGamesData.flatMap(g => {
+            const bets = g.playerBets[player.id] || [];
+            return bets.map(bet => [g.length, bet / 100]);
+        });
+
+        plotPlayerHeatmap2D(`player-bet-amount-${player.id}`, `${player.name}: Bet Amounts vs. Game Length`, allBets, 'Game Length (# of Bets)', 'Bet Amount ($)', '$');
     });
 }
 
@@ -859,6 +867,39 @@ function plotHeatmap(elementId, title, completedData, liveValue, tickPrefix = ''
     }
     const layout = { ...PLOTLY_LAYOUT_CONFIG, title, shapes, yaxis: { showticklabels: false }, xaxis: {...PLOTLY_LAYOUT_CONFIG.xaxis, tickprefix: tickPrefix} };
     Plotly.react(elementId, [trace], layout, {responsive: true});
+}
+
+function plotPlayerHeatmap2D(elementId, title, data, x_title, y_title, tickPrefix = '') {
+    if (!data || data.length === 0) {
+        Plotly.purge(elementId);
+        return;
+    }
+
+    const x = data.map(p => p[0]);
+    const y = data.map(p => p[1]);
+
+    const trace = {
+        x: x,
+        y: y,
+        type: 'histogram2d',
+        colorscale: 'Blues',
+        reversescale: true,
+        showscale: true,
+        colorbar: {
+            title: 'Count',
+            titleside: 'right'
+        },
+        hovertemplate: `${x_title}: %{x}<br>${y_title}: %{y}<br>Count: %{z}<extra></extra>`
+    };
+
+    const layout = {
+        ...PLOTLY_LAYOUT_CONFIG,
+        title,
+        xaxis: { ...PLOTLY_LAYOUT_CONFIG.xaxis, title: x_title },
+        yaxis: { ...PLOTLY_LAYOUT_CONFIG.yaxis, title: y_title, tickprefix: tickPrefix }
+    };
+
+    Plotly.react(elementId, [trace], layout, { responsive: true });
 }
 
 
